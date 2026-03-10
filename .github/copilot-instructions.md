@@ -34,6 +34,7 @@ Primary commands:
 - Build multi-ticker tabs page: `mekubbal-report-tabs --output logs/reports/dashboard.html --tab AAPL=logs/reports/aapl.html --tab MSFT=logs/reports/msft.html`
 - Build unified dashboard (leaderboards + tickers): `mekubbal-report-tabs --output logs/reports/unified_dashboard.html --leaderboard Stability=logs/multi_symbol_sector/reports/stability_leaderboard.html --tab AAPL=logs/reports/aapl.html --tab MSFT=logs/reports/msft.html`
 - Generate confidence-aware leaderboards: `mekubbal-leaderboards --reports-root logs/multi_symbol_sector/reports --confidence-level 0.95 --bootstrap-samples 2000 --permutation-samples 20000`
+- Compare profiles with paired significance: `mekubbal-profile-compare --profile-report base=logs/profiles/base_walkforward.csv --profile-report hardened=logs/profiles/hardened_walkforward.csv --output-csv logs/profile_compare/pairwise_significance.csv --output-html logs/profile_compare/pairwise_significance.html`
 - Model selection rule: `mekubbal-select --report logs/walkforward.csv --state models/current_model.json --lookback 3 --min-gap 0.0`
 - Regime-aware selection gate example: `mekubbal-select --report logs/walkforward.csv --state models/current_model.json --lookback 3 --min-gap 0.0 --min-turbulent-steps 100 --min-turbulent-win-rate 0.5 --min-turbulent-equity-factor 1.0 --max-turbulent-drawdown 0.15`
 - Config-driven initial loop: `mekubbal-loop --config configs/initial-loop.toml`
@@ -54,6 +55,7 @@ Primary commands:
 - Run multi-symbol test file: `pytest tests/test_multi_symbol.py -q`
 - Run config-hardening test file: `pytest tests/test_config_hardening.py -q`
 - Run leaderboards test file: `pytest tests/test_leaderboards.py -q`
+- Run profile-compare test file: `pytest tests/test_profile_compare.py -q`
 
 ## High-Level Architecture
 

@@ -91,6 +91,12 @@ mekubbal-leaderboards --reports-root logs/multi_symbol_sector/reports --confiden
 
 This also generates a `paired_significance_leaderboard` that compares each symbol against the top reference symbol using fold-aligned paired permutation tests.
 
+Compare multiple profile reports for the same symbol with paired significance:
+
+```bash
+mekubbal-profile-compare --profile-report base=logs/profiles/base_walkforward.csv --profile-report hardened=logs/profiles/hardened_walkforward.csv --profile-report aggressive=logs/profiles/aggressive_walkforward.csv --output-csv logs/profile_compare/pairwise_significance.csv --output-html logs/profile_compare/pairwise_significance.html
+```
+
 ### 5) Hardening configs from sweep winners
 
 Single symbol:
@@ -133,6 +139,7 @@ pytest tests/test_multi_symbol.py -q
 pytest tests/test_sweep.py -q
 pytest tests/test_config_hardening.py -q
 pytest tests/test_leaderboards.py -q
+pytest tests/test_profile_compare.py -q
 ```
 
 ## Typical project outputs (ignored by git)
