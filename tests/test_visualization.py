@@ -58,6 +58,12 @@ def test_render_experiment_report_writes_html(tmp_path):
         sweep_report_path=sweep,
         selection_state_path=selection,
         title="Test Report",
+        lineage={
+            "experiment_run_id": 123,
+            "config_profile": "hardened-aapl",
+            "config_version": 2,
+            "git_commit": "abc1234",
+        },
     )
     assert result.exists()
     text = result.read_text(encoding="utf-8")
@@ -66,6 +72,9 @@ def test_render_experiment_report_writes_html(tmp_path):
     assert "Walk-forward equity gaps" in text
     assert "Sweep ranking" in text
     assert "models/m4.zip" in text
+    assert "Run lineage" in text
+    assert "experiment_run_id" in text
+    assert "abc1234" in text
 
 
 def test_render_ticker_tabs_report_writes_tabs_page(tmp_path):
@@ -88,3 +97,24 @@ def test_render_ticker_tabs_report_writes_tabs_page(tmp_path):
     assert "AAPL" in text
     assert "MSFT" in text
     assert "aapl.html" in text
+
+
+def test_render_ticker_tabs_report_includes_leaderboards(tmp_path):
+    output = tmp_path / "dashboard.html"
+    aapl = tmp_path / "aapl.html"
+    board = tmp_path / "stability.html"
+    aapl.write_text("<html>AAPL</html>", encoding="utf-8")
+    board.write_text("<html>Stability</html>", encoding="utf-8")
+    result = render_ticker_tabs_report(
+        output_path=output,
+        ticker_reports={"AAPL": aapl},
+        leaderboard_reports={"Stability leaderboard": board},
+        title="Unified Dashboard",
+    )
+    assert result.exists()
+    text = result.read_text(encoding="utf-8")
+    assert "Leaderboards" in text
+    assert "Tickers" in text
+    assert "Stability leaderboard" in text
+    assert "showReport" in text
+    assert "stability.html" in text

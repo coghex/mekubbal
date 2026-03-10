@@ -29,6 +29,10 @@ def test_run_research_control_calls_pipeline_and_report(monkeypatch, tmp_path):
     config_path = tmp_path / "control.toml"
     config_path.write_text(
         f"""
+[meta]
+config_version = 3
+profile = "research-aapl"
+
 [data]
 path = "{tmp_path / "data.csv"}"
 refresh = false
@@ -125,6 +129,7 @@ symbol = "AAPL"
     monkeypatch.setattr(control_module, "run_model_selection", fake_selection)
     monkeypatch.setattr(control_module, "render_experiment_report", fake_report)
     monkeypatch.setattr(control_module, "log_experiment_run", lambda **kwargs: 77)
+    monkeypatch.setattr(control_module, "_git_commit_sha", lambda: "abc1234")
 
     summary = run_research_control(config_path)
     assert summary["experiment_run_id"] == 77
@@ -132,3 +137,7 @@ symbol = "AAPL"
     assert summary["visual_report_path"].endswith("report.html")
     assert captured["selection"]["min_turbulent_win_rate"] == 0.5
     assert captured["sweep"]["regime_tie_break_tolerance"] == 0.01
+    assert summary["lineage"]["experiment_run_id"] == 77
+    assert summary["lineage"]["config_profile"] == "research-aapl"
+    assert summary["lineage"]["config_version"] == 3
+    assert captured["report"]["lineage"]["git_commit"] == "abc1234"

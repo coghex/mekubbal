@@ -5,19 +5,19 @@ import argparse
 from mekubbal.visualization import render_ticker_tabs_report
 
 
-def _parse_tabs(values: list[str]) -> dict[str, str]:
+def _parse_mapping(values: list[str], *, uppercase_key: bool, field_name: str) -> dict[str, str]:
     mapping: dict[str, str] = {}
     for raw in values:
         if "=" not in raw:
-            raise ValueError("Each --tab value must use TICKER=path format.")
+            raise ValueError(f"Each --{field_name} value must use NAME=path format.")
         ticker, path = raw.split("=", 1)
-        ticker = ticker.strip().upper()
+        ticker = ticker.strip()
         path = path.strip()
         if not ticker or not path:
-            raise ValueError("Each --tab value must include both ticker and path.")
+            raise ValueError(f"Each --{field_name} value must include both name and path.")
+        if uppercase_key:
+            ticker = ticker.upper()
         mapping[ticker] = path
-    if not mapping:
-        raise ValueError("At least one --tab value is required.")
     return mapping
 
 
@@ -30,12 +30,23 @@ def main() -> None:
         default=[],
         help="Ticker mapping in TICKER=report_path form (repeat for multiple tickers)",
     )
+    parser.add_argument(
+        "--leaderboard",
+        action="append",
+        default=[],
+        help="Leaderboard mapping in NAME=report_path form (repeat for multiple leaderboards)",
+    )
     parser.add_argument("--title", default="Mekubbal Multi-Ticker Dashboard", help="Dashboard title")
     args = parser.parse_args()
+    tabs = _parse_mapping(args.tab, uppercase_key=True, field_name="tab")
+    leaderboards = _parse_mapping(args.leaderboard, uppercase_key=False, field_name="leaderboard")
+    if not tabs and not leaderboards:
+        raise ValueError("At least one --tab or --leaderboard value is required.")
 
     report = render_ticker_tabs_report(
         output_path=args.output,
-        ticker_reports=_parse_tabs(args.tab),
+        ticker_reports=tabs,
+        leaderboard_reports=leaderboards or None,
         title=args.title,
     )
     print({"output": str(report)})

@@ -41,6 +41,7 @@ mekubbal-report = "mekubbal.cli.report:main"
 mekubbal-report-tabs = "mekubbal.cli.report_tabs:main"
 mekubbal-multi-symbol = "mekubbal.cli.multi_symbol:main"
 mekubbal-harden-config = "mekubbal.cli.harden_config:main"
+mekubbal-leaderboards = "mekubbal.cli.leaderboards:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

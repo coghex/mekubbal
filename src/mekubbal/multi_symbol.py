@@ -119,6 +119,7 @@ def run_multi_symbol_control(
         ablation = summary.get("ablation", {})
         sweep = summary.get("sweep", {})
         selection = summary.get("selection", {})
+        lineage = summary.get("lineage", {})
         avg_walk_gap = None
         if walk:
             policy = _as_float(walk.get("avg_policy_final_equity"))
@@ -135,6 +136,10 @@ def run_multi_symbol_control(
                 "sweep_best_delta": _as_float(sweep.get("best_v2_minus_v1_like_avg_equity_gap")),
                 "selection_promoted": selection.get("promoted"),
                 "selection_active_model_path": selection.get("active_model_path"),
+                "lineage_config_profile": lineage.get("config_profile"),
+                "lineage_config_version": lineage.get("config_version"),
+                "lineage_git_commit": lineage.get("git_commit"),
+                "lineage_experiment_run_id": lineage.get("experiment_run_id"),
                 "hardened_config_path": hardening.get("output_config_path") if hardening else None,
                 "hardened_selected_delta": _as_float(hardening.get("selected_delta")) if hardening else None,
                 "hardened_selected_rank": int(hardening["selected_rank"]) if hardening else None,

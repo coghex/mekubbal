@@ -30,7 +30,10 @@ Primary commands:
 - Multi-symbol hardened run: `mekubbal-multi-symbol --base-config configs/research-control.toml --symbols AAPL,MSFT,NVDA --output-root logs/multi_symbol --harden-configs --hardened-rank 1 --hardened-profile-template hardened-{symbol_lower}`
 - Harden config from sweep: `mekubbal-harden-config --base-config configs/research-control.toml --sweep-report logs/sweeps/aapl/ranking.csv --output configs/research-control.hardened.toml --rank 1`
 - Build HTML report: `mekubbal-report --output logs/reports/aapl.html --walkforward-report logs/walkforward.csv --ablation-summary logs/ablation_summary.csv --sweep-report logs/sweeps/aapl/ranking.csv --selection-state models/current_model.json`
+- Build HTML report with lineage tags: `mekubbal-report --output logs/reports/aapl.html --walkforward-report logs/walkforward.csv --lineage git_commit=$(git rev-parse --short HEAD) --lineage config_profile=hardened-aapl --lineage experiment_run_id=42`
 - Build multi-ticker tabs page: `mekubbal-report-tabs --output logs/reports/dashboard.html --tab AAPL=logs/reports/aapl.html --tab MSFT=logs/reports/msft.html`
+- Build unified dashboard (leaderboards + tickers): `mekubbal-report-tabs --output logs/reports/unified_dashboard.html --leaderboard Stability=logs/multi_symbol_sector/reports/stability_leaderboard.html --tab AAPL=logs/reports/aapl.html --tab MSFT=logs/reports/msft.html`
+- Generate confidence-aware leaderboards: `mekubbal-leaderboards --reports-root logs/multi_symbol_sector/reports --confidence-level 0.95 --bootstrap-samples 2000 --permutation-samples 20000`
 - Model selection rule: `mekubbal-select --report logs/walkforward.csv --state models/current_model.json --lookback 3 --min-gap 0.0`
 - Regime-aware selection gate example: `mekubbal-select --report logs/walkforward.csv --state models/current_model.json --lookback 3 --min-gap 0.0 --min-turbulent-steps 100 --min-turbulent-win-rate 0.5 --min-turbulent-equity-factor 1.0 --max-turbulent-drawdown 0.15`
 - Config-driven initial loop: `mekubbal-loop --config configs/initial-loop.toml`
@@ -50,6 +53,7 @@ Primary commands:
 - Run visualization test file: `pytest tests/test_visualization.py -q`
 - Run multi-symbol test file: `pytest tests/test_multi_symbol.py -q`
 - Run config-hardening test file: `pytest tests/test_config_hardening.py -q`
+- Run leaderboards test file: `pytest tests/test_leaderboards.py -q`
 
 ## High-Level Architecture
 

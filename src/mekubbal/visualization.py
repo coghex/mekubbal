@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,21 @@ def _metric_card(title: str, value: Any) -> str:
         f"<div class='card-value'>{html.escape(str(value))}</div>"
         "</div>"
     )
+
+
+def _lineage_rows(lineage: dict[str, Any] | None) -> pd.DataFrame:
+    entries: list[dict[str, str]] = [
+        {
+            "field": "generated_at_utc",
+            "value": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        }
+    ]
+    if lineage:
+        for key, value in lineage.items():
+            if value in (None, ""):
+                continue
+            entries.append({"field": str(key), "value": str(value)})
+    return pd.DataFrame(entries)
 
 
 def _gap_bars_html(walkforward: pd.DataFrame) -> str:
@@ -155,6 +171,7 @@ def render_experiment_report(
     sweep_report_path: str | Path | None = None,
     selection_state_path: str | Path | None = None,
     title: str = "Mekubbal Research Report",
+    lineage: dict[str, Any] | None = None,
 ) -> Path:
     walkforward = (
         pd.read_csv(walkforward_report_path)
@@ -233,6 +250,7 @@ def render_experiment_report(
         else "<p><em>No selection rows available.</em></p>"
     )
     headline_items = "".join(f"<li>{html.escape(line)}</li>" for line in headline_lines)
+    lineage_table = _table_html(_lineage_rows(lineage))
 
     document = f"""<!doctype html>
 <html lang="en">
@@ -277,6 +295,11 @@ def render_experiment_report(
     <h2>Plain-language summary</h2>
     <p><strong>Overall status:</strong> {headline_badge}</p>
     <ul>{headline_items}</ul>
+  </div>
+  <div class="section">
+    <h2>Run lineage</h2>
+    <p>Traceability tags for this report output.</p>
+    {lineage_table}
   </div>
   <div class="cards">{''.join(cards) if cards else '<p><em>No artifacts loaded.</em></p>'}</div>
   <div class="section">
@@ -326,77 +349,188 @@ def render_ticker_tabs_report(
     ticker_reports: dict[str, str | Path],
     *,
     title: str = "Mekubbal Multi-Ticker Dashboard",
+    leaderboard_reports: dict[str, str | Path] | None = None,
 ) -> Path:
-    if not ticker_reports:
-        raise ValueError("ticker_reports must include at least one ticker-to-report mapping.")
+    if not ticker_reports and not leaderboard_reports:
+        raise ValueError("Provide at least one ticker report or leaderboard report.")
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     base_dir = output.parent.resolve()
 
-    normalized: dict[str, str] = {}
-    for ticker, raw_path in ticker_reports.items():
-        ticker_name = str(ticker).upper()
-        path_str = str(raw_path)
-        if "://" in path_str:
-            normalized[ticker_name] = path_str
-            continue
-        path = Path(path_str).expanduser()
-        if not path.is_absolute():
-            path = (Path.cwd() / path).resolve()
-        else:
-            path = path.resolve()
-        if not path.exists():
-            raise FileNotFoundError(f"Ticker report file does not exist for {ticker_name}: {path}")
-        try:
-            rendered_path = path.relative_to(base_dir).as_posix()
-        except ValueError:
-            rendered_path = Path(os.path.relpath(path, start=base_dir)).as_posix()
-        normalized[ticker_name] = rendered_path
+    def _normalize_paths(items: dict[str, str | Path], *, uppercase_keys: bool) -> dict[str, str]:
+        normalized: dict[str, str] = {}
+        for name, raw_path in items.items():
+            name_str = str(name).strip()
+            if not name_str:
+                continue
+            normalized_name = name_str.upper() if uppercase_keys else name_str
+            path_str = str(raw_path)
+            if "://" in path_str:
+                normalized[normalized_name] = path_str
+                continue
+            path = Path(path_str).expanduser()
+            if not path.is_absolute():
+                path = (Path.cwd() / path).resolve()
+            else:
+                path = path.resolve()
+            if not path.exists():
+                raise FileNotFoundError(f"Dashboard report file does not exist for {normalized_name}: {path}")
+            try:
+                rendered_path = path.relative_to(base_dir).as_posix()
+            except ValueError:
+                rendered_path = Path(os.path.relpath(path, start=base_dir)).as_posix()
+            normalized[normalized_name] = rendered_path
+        return normalized
 
-    tickers = sorted(normalized)
-    initial = tickers[0]
-    tabs_html = "".join(
-        (
-            f"<button class='tab-button{' active' if ticker == initial else ''}' "
-            f"onclick=\"showTicker('{html.escape(ticker)}')\">{html.escape(ticker)}</button>"
-        )
-        for ticker in tickers
+    normalized_tickers = _normalize_paths(ticker_reports, uppercase_keys=True) if ticker_reports else {}
+    normalized_leaderboards = (
+        _normalize_paths(leaderboard_reports, uppercase_keys=False) if leaderboard_reports else {}
     )
-    script_map = json.dumps(normalized, sort_keys=True)
+    if not normalized_tickers and not normalized_leaderboards:
+        raise ValueError("No valid dashboard reports were provided.")
+
+    entries: list[dict[str, str]] = []
+    leaderboard_entries: list[dict[str, str]] = []
+    ticker_entries: list[dict[str, str]] = []
+    for board_name in sorted(normalized_leaderboards):
+        item = {
+            "id": f"leaderboard::{board_name}",
+            "label": board_name,
+            "group": "Leaderboards",
+            "src": normalized_leaderboards[board_name],
+        }
+        entries.append(item)
+        leaderboard_entries.append(item)
+    for ticker in sorted(normalized_tickers):
+        item = {
+            "id": f"ticker::{ticker}",
+            "label": ticker,
+            "group": "Tickers",
+            "src": normalized_tickers[ticker],
+        }
+        entries.append(item)
+        ticker_entries.append(item)
+
+    initial = entries[0]["id"]
+    entries_json = json.dumps(entries, sort_keys=True)
+
+    def _buttons_html(items: list[dict[str, str]]) -> str:
+        return "".join(
+            (
+                f"<button class='report-button{' active' if entry['id'] == initial else ''}' "
+                f"data-report-id='{html.escape(entry['id'])}' data-label='{html.escape(entry['label'])}' "
+                f"data-group='{html.escape(entry['group'])}' onclick=\"showReport('{html.escape(entry['id'])}')\">"
+                f"{html.escape(entry['label'])}</button>"
+            )
+            for entry in items
+        )
+
+    leaderboard_buttons = _buttons_html(leaderboard_entries)
+    ticker_buttons = _buttons_html(ticker_entries)
+
     document = f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>{html.escape(title)}</title>
   <style>
-    body {{ font-family: Arial, sans-serif; margin: 20px; color: #222; }}
-    h1 {{ margin-bottom: 12px; }}
-    .tabs {{ display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }}
-    .tab-button {{
+    body {{ font-family: Arial, sans-serif; margin: 0; color: #222; background: #fafafa; }}
+    .layout {{ display: grid; grid-template-columns: 300px 1fr; height: 100vh; }}
+    .sidebar {{ border-right: 1px solid #ddd; padding: 14px; background: #fff; overflow-y: auto; }}
+    .content {{ padding: 14px; }}
+    h1 {{ margin: 0 0 10px 0; font-size: 20px; }}
+    .subtle {{ color: #666; font-size: 12px; margin-bottom: 10px; }}
+    .controls {{ display: grid; gap: 8px; margin-bottom: 10px; }}
+    .controls input {{
+      width: 100%;
+      box-sizing: border-box;
       border: 1px solid #ccc;
-      background: #f4f4f4;
-      padding: 6px 10px;
       border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 13px;
+    }}
+    .group-title {{ font-size: 12px; font-weight: 700; color: #555; margin: 10px 0 6px 0; text-transform: uppercase; letter-spacing: 0.03em; }}
+    .report-grid {{ display: grid; gap: 6px; }}
+    .report-button {{
+      text-align: left;
+      border: 1px solid #d9d9d9;
+      background: #f6f6f6;
+      border-radius: 6px;
+      padding: 6px 8px;
       cursor: pointer;
+      font-size: 13px;
       font-weight: 600;
     }}
-    .tab-button.active {{ background: #dfeeff; border-color: #7ea9ff; }}
-    iframe {{ width: 100%; height: calc(100vh - 150px); border: 1px solid #ddd; border-radius: 8px; }}
+    .report-button.active {{ background: #dfeeff; border-color: #7ea9ff; }}
+    .content-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }}
+    .chip {{ border: 1px solid #d7d7d7; border-radius: 999px; padding: 3px 8px; font-size: 12px; background: #fff; color: #555; }}
+    iframe {{ width: 100%; height: calc(100vh - 90px); border: 1px solid #ddd; border-radius: 8px; background: #fff; }}
   </style>
 </head>
 <body>
-  <h1>{html.escape(title)}</h1>
-  <div class="tabs">{tabs_html}</div>
-  <iframe id="report-frame" src="{html.escape(normalized[initial])}" title="Ticker report"></iframe>
+  <div class="layout">
+    <aside class="sidebar">
+      <h1>{html.escape(title)}</h1>
+      <div class="subtle">Unified workspace for leaderboards and per-ticker reports.</div>
+      <div class="controls">
+        <input id="report-search" placeholder="Filter reports..." oninput="filterReports()" />
+      </div>
+      <div id="leaderboard-section" class="section-group">
+        <div class="group-title">Leaderboards</div>
+        <div id="leaderboard-grid" class="report-grid">{leaderboard_buttons if leaderboard_buttons else "<p><em>No leaderboard pages.</em></p>"}</div>
+      </div>
+      <div id="ticker-section" class="section-group">
+        <div class="group-title">Tickers</div>
+        <div id="ticker-grid" class="report-grid">{ticker_buttons if ticker_buttons else "<p><em>No ticker pages.</em></p>"}</div>
+      </div>
+    </aside>
+    <main class="content">
+      <div class="content-header">
+        <div><strong id="active-report-label"></strong></div>
+        <span id="active-report-group" class="chip"></span>
+      </div>
+      <iframe id="report-frame" title="Dashboard report"></iframe>
+    </main>
+  </div>
   <script>
-    const reportMap = {script_map};
-    function showTicker(ticker) {{
-      const frame = document.getElementById('report-frame');
-      frame.src = reportMap[ticker];
-      document.querySelectorAll('.tab-button').forEach((button) => {{
-        button.classList.toggle('active', button.textContent === ticker);
+    const reports = {entries_json};
+    const byId = Object.fromEntries(reports.map((entry) => [entry.id, entry]));
+
+    function setActiveButton(reportId) {{
+      document.querySelectorAll('.report-button').forEach((button) => {{
+        button.classList.toggle('active', button.dataset.reportId === reportId);
       }});
     }}
+
+    function showReport(reportId) {{
+      const entry = byId[reportId];
+      if (!entry) return;
+      const frame = document.getElementById('report-frame');
+      frame.src = entry.src;
+      document.getElementById('active-report-label').textContent = entry.label;
+      document.getElementById('active-report-group').textContent = entry.group;
+      setActiveButton(reportId);
+    }}
+
+    function filterReports() {{
+      const query = document.getElementById('report-search').value.trim().toLowerCase();
+      document.querySelectorAll('.report-button').forEach((button) => {{
+        const label = (button.dataset.label || '').toLowerCase();
+        const matchesText = !query || label.includes(query);
+        button.style.display = matchesText ? '' : 'none';
+      }});
+      ['leaderboard-section', 'ticker-section'].forEach((sectionId) => {{
+        const section = document.getElementById(sectionId);
+        const visible = Array.from(section.querySelectorAll('.report-button')).some((button) => button.style.display !== 'none');
+        section.style.display = visible ? '' : 'none';
+      }});
+    }}
+
+    function showTicker(ticker) {{
+      showReport(`ticker::${{ticker}}`);
+    }}
+
+    showReport({json.dumps(initial)});
   </script>
 </body>
 </html>

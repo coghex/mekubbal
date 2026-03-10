@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+import subprocess
 from typing import Any
 
 import tomllib
@@ -175,6 +176,19 @@ def _resolved_window(value: Any, fallback: int | None) -> int | None:
     return int(value)
 
 
+def _git_commit_sha() -> str | None:
+    result = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    sha = result.stdout.strip()
+    return sha or None
+
+
 def _load_toml_table(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Config file does not exist: {path}")
@@ -235,6 +249,9 @@ def run_research_control_config(
     selection_cfg = config["selection"]
     viz_cfg = config["visualization"]
     logging_cfg = config["logging"]
+    meta_cfg = config.get("meta", {})
+    if meta_cfg is not None and not isinstance(meta_cfg, dict):
+        raise ValueError("meta table must be a TOML table.")
 
     data_path = str(data_cfg["path"])
     if bool(data_cfg["refresh"]):
@@ -247,7 +264,20 @@ def run_research_control_config(
 
     set_global_seed(int(policy_cfg["seed"]))
     log_db_path = str(logging_cfg["db_path"]) if bool(logging_cfg["enabled"]) else None
-    summary: dict[str, Any] = {"config_path": str(config_label), "data_path": data_path}
+    lineage: dict[str, Any] = {
+        "config_path": str(config_label),
+        "config_version": meta_cfg.get("config_version") if isinstance(meta_cfg, dict) else None,
+        "config_profile": meta_cfg.get("profile") if isinstance(meta_cfg, dict) else None,
+        "symbol": logging_cfg.get("symbol"),
+        "git_commit": _git_commit_sha(),
+    }
+    summary: dict[str, Any] = {
+        "config_path": str(config_label),
+        "data_path": data_path,
+        "lineage": {
+            key: value for key, value in lineage.items() if value not in (None, "")
+        },
+    }
 
     if bool(walk_cfg["enabled"]):
         walk_metrics = run_walk_forward_validation(
@@ -349,17 +379,6 @@ def run_research_control_config(
         )
         summary["selection"] = selection_metrics
 
-    if bool(viz_cfg["enabled"]):
-        output = render_experiment_report(
-            output_path=str(viz_cfg["output_path"]),
-            walkforward_report_path=str(walk_cfg["report_path"]) if bool(walk_cfg["enabled"]) else None,
-            ablation_summary_path=str(ablation_cfg["summary_path"]) if bool(ablation_cfg["enabled"]) else None,
-            sweep_report_path=str(sweep_cfg["report_path"]) if bool(sweep_cfg["enabled"]) else None,
-            selection_state_path=str(selection_cfg["state_path"]) if bool(selection_cfg["enabled"]) else None,
-            title=str(viz_cfg["title"]),
-        )
-        summary["visual_report_path"] = str(output)
-
     if log_db_path is not None:
         run_id = log_experiment_run(
             db_path=log_db_path,
@@ -372,6 +391,19 @@ def run_research_control_config(
             metrics=summary,
         )
         summary["experiment_run_id"] = run_id
+        summary["lineage"]["experiment_run_id"] = run_id
+
+    if bool(viz_cfg["enabled"]):
+        output = render_experiment_report(
+            output_path=str(viz_cfg["output_path"]),
+            walkforward_report_path=str(walk_cfg["report_path"]) if bool(walk_cfg["enabled"]) else None,
+            ablation_summary_path=str(ablation_cfg["summary_path"]) if bool(ablation_cfg["enabled"]) else None,
+            sweep_report_path=str(sweep_cfg["report_path"]) if bool(sweep_cfg["enabled"]) else None,
+            selection_state_path=str(selection_cfg["state_path"]) if bool(selection_cfg["enabled"]) else None,
+            title=str(viz_cfg["title"]),
+            lineage=summary.get("lineage"),
+        )
+        summary["visual_report_path"] = str(output)
     return summary
 
 

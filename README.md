@@ -59,6 +59,12 @@ mekubbal-control --config configs/research-control.toml
 mekubbal-report --output logs/reports/aapl.html --walkforward-report logs/walkforward.csv --ablation-summary logs/ablation_summary.csv --sweep-report logs/sweeps/aapl/ranking.csv --selection-state models/current_model.json
 ```
 
+Optional lineage tags for manual report builds:
+
+```bash
+mekubbal-report --output logs/reports/aapl.html --walkforward-report logs/walkforward.csv --lineage git_commit=$(git rev-parse --short HEAD) --lineage config_profile=hardened-aapl --lineage experiment_run_id=42
+```
+
 ### 4) Multi-symbol runs
 
 ```bash
@@ -70,6 +76,20 @@ Tabbed dashboard from per-symbol reports:
 ```bash
 mekubbal-report-tabs --output logs/reports/dashboard.html --tab AAPL=logs/reports/aapl.html --tab MSFT=logs/reports/msft.html --tab NVDA=logs/reports/nvda.html
 ```
+
+Unified dashboard including leaderboards and ticker reports:
+
+```bash
+mekubbal-report-tabs --output logs/reports/unified_dashboard.html --leaderboard "Stability=logs/multi_symbol_sector/reports/stability_leaderboard.html" --tab AAPL=logs/reports/aapl.html --tab MSFT=logs/reports/msft.html
+```
+
+Generate confidence-aware leaderboard pages (bootstrap CIs + probability of positive gap):
+
+```bash
+mekubbal-leaderboards --reports-root logs/multi_symbol_sector/reports --confidence-level 0.95 --bootstrap-samples 2000 --permutation-samples 20000
+```
+
+This also generates a `paired_significance_leaderboard` that compares each symbol against the top reference symbol using fold-aligned paired permutation tests.
 
 ### 5) Hardening configs from sweep winners
 
@@ -112,6 +132,7 @@ pytest tests/test_control.py -q
 pytest tests/test_multi_symbol.py -q
 pytest tests/test_sweep.py -q
 pytest tests/test_config_hardening.py -q
+pytest tests/test_leaderboards.py -q
 ```
 
 ## Typical project outputs (ignored by git)
