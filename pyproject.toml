@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mekubbal"
+version = "0.1.0"
+description = "RL stock-learning project using PyTorch and PPO"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "yfinance>=0.2.54",
+  "gymnasium>=0.29",
+  "stable-baselines3>=2.3.0",
+  "torch>=2.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.1",
+  "ruff>=0.6.0",
+]
+
+[project.scripts]
+mekubbal-download = "mekubbal.cli.download:main"
+mekubbal-train = "mekubbal.cli.train:main"
+mekubbal-evaluate = "mekubbal.cli.evaluate:main"
+mekubbal-paper = "mekubbal.cli.paper:main"
+mekubbal-retrain = "mekubbal.cli.retrain:main"
+mekubbal-runs = "mekubbal.cli.runs:main"
+mekubbal-walkforward = "mekubbal.cli.walkforward:main"
+mekubbal-loop = "mekubbal.cli.loop:main"
+mekubbal-select = "mekubbal.cli.select:main"
+mekubbal-diagnostics = "mekubbal.cli.diagnostics:main"
+mekubbal-ablate = "mekubbal.cli.ablate:main"
+mekubbal-sweep = "mekubbal.cli.sweep:main"
+mekubbal-control = "mekubbal.cli.control:main"
+mekubbal-report = "mekubbal.cli.report:main"
+mekubbal-report-tabs = "mekubbal.cli.report_tabs:main"
+mekubbal-multi-symbol = "mekubbal.cli.multi_symbol:main"
+mekubbal-harden-config = "mekubbal.cli.harden_config:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100

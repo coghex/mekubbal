@@ -1,0 +1,33 @@
+[data]
+path = "data/aapl.csv"
+refresh = false
+# Required only when refresh=true
+symbol = "AAPL"
+start = "2018-01-01"
+end = "2025-01-01"
+
+[training]
+model_path = "models/aapl_ppo"
+timesteps = 30000
+train_ratio = 0.8
+trade_cost = 0.001
+risk_penalty = 0.0002
+switch_penalty = 0.0001
+position_levels = [-1.0, -0.5, 0.0, 0.5, 1.0]
+seed = 7
+
+[paper]
+enabled = true
+output_path = "logs/aapl_paper.csv"
+append = true
+start_date = ""
+
+[logging]
+enabled = true
+db_path = "logs/experiments.db"
+symbol = "AAPL"
+
+[reproducibility]
+enabled = true
+manifest_dir = "logs/manifests"
+manifest_prefix = "initial-loop"

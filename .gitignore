@@ -1,0 +1,21 @@
+# Python / tooling
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/
+
+# Generated experiment artifacts
+data/*.csv
+models/
+logs/
+configs/*.hardened.toml

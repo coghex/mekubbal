@@ -1,0 +1,91 @@
+# Copilot Instructions for This Repository
+
+## Build, Test, and Lint Commands
+
+Set up environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+Primary commands:
+
+- Lint: `ruff check .`
+- Run full tests: `pytest -q`
+- Run env test file: `pytest tests/test_env.py -q`
+- Download data: `mekubbal-download --symbol AAPL --start 2018-01-01 --end 2025-01-01 --output data/aapl.csv`
+- Train model: `mekubbal-train --data data/aapl.csv --model models/aapl_ppo --timesteps 30000`
+- Evaluate model: `mekubbal-evaluate --data data/aapl.csv --model models/aapl_ppo.zip`
+- Paper-trade replay log: `mekubbal-paper --data data/aapl.csv --model models/aapl_ppo.zip --output logs/aapl_paper.csv`
+- Periodic retraining: `mekubbal-retrain --data data/aapl.csv --models-dir models/retrain --report logs/retrain.csv --cadence weekly --timesteps 10000 --max-runs 4`
+- List experiment runs: `mekubbal-runs --db logs/experiments.db --symbol AAPL --limit 20`
+- Diagnostics summary: `mekubbal-diagnostics --mode paper --input logs/aapl_paper.csv`
+- Walk-forward validation: `mekubbal-walkforward --data data/aapl.csv --models-dir models/walkforward --report logs/walkforward.csv --train-window 252 --test-window 63 --step-window 63 --expanding`
+- Ablation study: `mekubbal-ablate --data data/aapl.csv --models-dir models/ablation --report logs/ablation_folds.csv --summary logs/ablation_summary.csv --train-window 252 --test-window 63 --step-window 63`
+- Reward-penalty sweep: `mekubbal-sweep --data data/aapl.csv --output-dir logs/sweeps/aapl --report logs/sweeps/aapl/ranking.csv --downside-grid 0,0.005,0.01,0.02 --drawdown-grid 0,0.02,0.05,0.1 --regime-tie-break-tolerance 0.01`
+- Research control workflow: `mekubbal-control --config configs/research-control.toml`
+- Multi-symbol control run: `mekubbal-multi-symbol --base-config configs/research-control.toml --symbols AAPL,MSFT,NVDA --output-root logs/multi_symbol`
+- Multi-symbol hardened run: `mekubbal-multi-symbol --base-config configs/research-control.toml --symbols AAPL,MSFT,NVDA --output-root logs/multi_symbol --harden-configs --hardened-rank 1 --hardened-profile-template hardened-{symbol_lower}`
+- Harden config from sweep: `mekubbal-harden-config --base-config configs/research-control.toml --sweep-report logs/sweeps/aapl/ranking.csv --output configs/research-control.hardened.toml --rank 1`
+- Build HTML report: `mekubbal-report --output logs/reports/aapl.html --walkforward-report logs/walkforward.csv --ablation-summary logs/ablation_summary.csv --sweep-report logs/sweeps/aapl/ranking.csv --selection-state models/current_model.json`
+- Build multi-ticker tabs page: `mekubbal-report-tabs --output logs/reports/dashboard.html --tab AAPL=logs/reports/aapl.html --tab MSFT=logs/reports/msft.html`
+- Model selection rule: `mekubbal-select --report logs/walkforward.csv --state models/current_model.json --lookback 3 --min-gap 0.0`
+- Regime-aware selection gate example: `mekubbal-select --report logs/walkforward.csv --state models/current_model.json --lookback 3 --min-gap 0.0 --min-turbulent-steps 100 --min-turbulent-win-rate 0.5 --min-turbulent-equity-factor 1.0 --max-turbulent-drawdown 0.15`
+- Config-driven initial loop: `mekubbal-loop --config configs/initial-loop.toml`
+- Run paper-log test file: `pytest tests/test_paper.py -q`
+- Run retraining test file: `pytest tests/test_retrain.py -q`
+- Run experiment-log test file: `pytest tests/test_experiment_log.py -q`
+- Run walk-forward test file: `pytest tests/test_walk_forward.py -q`
+- Run end-to-end smoke test file: `pytest tests/test_smoke_pipeline.py -q`
+- Run edge-case test file: `pytest tests/test_edge_cases.py -q`
+- Run initial-loop config test file: `pytest tests/test_initial_loop.py -q`
+- Run data-gate test file: `pytest tests/test_data_gates.py -q`
+- Run selection test file: `pytest tests/test_selection.py -q`
+- Run diagnostics test file: `pytest tests/test_diagnostics.py -q`
+- Run ablation test file: `pytest tests/test_ablation.py -q`
+- Run sweep test file: `pytest tests/test_sweep.py -q`
+- Run control test file: `pytest tests/test_control.py -q`
+- Run visualization test file: `pytest tests/test_visualization.py -q`
+- Run multi-symbol test file: `pytest tests/test_multi_symbol.py -q`
+- Run config-hardening test file: `pytest tests/test_config_hardening.py -q`
+
+## High-Level Architecture
+
+Data and training flow:
+
+1. `mekubbal.data`: downloads daily OHLCV data (yfinance) and loads/saves CSV.
+2. `mekubbal.features`: converts OHLCV into engineered numeric features and `next_return`, then performs chronological train/test split.
+3. `mekubbal.env.TradingEnv`: Gymnasium environment with discrete target-position actions (short to long) and multi-part reward penalties.
+4. `mekubbal.train`: trains PPO (`stable-baselines3`) with `MlpPolicy` on the training slice and saves model artifacts.
+5. `mekubbal.evaluate`: replays the saved policy on test data and compares against buy-and-hold baseline.
+6. `mekubbal.paper`: deterministic policy replay with per-step action/PnL logging and optional append/resume mode.
+7. `mekubbal.retrain`: executes weekly/monthly retraining windows with model snapshots and metrics report.
+8. `mekubbal.walk_forward`: rolling/expanding walk-forward folds with per-fold model snapshots and report output.
+9. `mekubbal.diagnostics`: computes drawdown/turnover/sharpe-like/win-rate diagnostics from episodes and reports.
+10. `mekubbal.selection`: promotion rule that advances active model only when recent walk-forward folds beat baseline.
+11. `mekubbal.initial_loop`: TOML-driven initial loop automation (optional refresh, train, paper, logging).
+12. `mekubbal.reproducibility`: global deterministic seed setup and run-manifest hash generation.
+13. `mekubbal.experiment_log`: SQLite-backed experiment run logging and query helpers.
+14. `mekubbal.ablation`: walk-forward ablation runner comparing a v1-like control to v2 on aligned folds.
+15. `mekubbal.sweep`: grid search over downside/drawdown penalties via repeated ablation runs.
+16. `mekubbal.control`: orchestrated control workflow runner that executes walk-forward, ablation, sweep, selection, and report generation from one TOML config.
+17. `mekubbal.multi_symbol`: batch runner that applies the control workflow across multiple symbols and writes aggregate summaries.
+18. `mekubbal.config_hardening`: creates versioned config overlays from sweep rankings using `meta.extends`.
+19. `mekubbal.visualization`: static HTML report builder for key experiment artifacts.
+20. `mekubbal.cli.*`: command-line wrappers for download/train/evaluate/paper/retrain/walkforward/ablate/sweep/control/multi-symbol/harden-config/report/report-tabs/diagnostics/select/runs/loop workflow.
+
+## Key Conventions in This Codebase
+
+- Feature columns are prefixed with `feat_`; environment observations are `[all feat_* columns, current_position, position_age_norm]`.
+- Feature pack v2 uses rolling-normalized momentum/volatility/volume/range features, centered RSI, volatility regime context, and rolling drawdown context.
+- Keep time-series handling chronological (no shuffling); train/test splits are by date order to avoid future leakage.
+- Reward is defined as: gross return (`target_position * next_return`) minus trade-cost penalty, risk penalty (`position^2` scaled), switch penalty when changing position, downside-volatility penalty, and drawdown-spike penalty.
+- Default action semantics in `TradingEnv` map to target positions `[-1.0, -0.5, 0.0, 0.5, 1.0]` (customizable via `--position-levels`).
+- CLI commands log run metadata and metrics to `logs/experiments.db` by default (`--no-log` disables).
+- Walk-forward folds must remain chronological; each fold trains on an earlier window and tests on the immediately following window.
+- Initial loop runs write reproducibility manifests (config/data/model hashes + seed + dependency versions) to `logs/manifests/` by default.
+- `load_ohlcv_csv` now enforces data gates (strict date ordering, duplicate-date rejection, OHLCV numeric checks) and warns on large return outliers.
+- Model selection keeps previous active model when promotion criteria are not met; regime gate thresholds can require minimum turbulent exposure and performance before promotion.
+- Evaluation and paper outputs include diagnostics fields prefixed with `diag_`.

@@ -1,0 +1,63 @@
+[data]
+path = "data/aapl.csv"
+refresh = false
+symbol = ""
+start = ""
+end = ""
+
+[policy]
+timesteps = 5000
+trade_cost = 0.001
+risk_penalty = 0.0002
+switch_penalty = 0.0001
+position_levels = [-1.0, -0.5, 0.0, 0.5, 1.0]
+seed = 7
+downside_window = 20
+
+[walkforward]
+enabled = true
+models_dir = "models/walkforward"
+report_path = "logs/walkforward.csv"
+train_window = 252
+test_window = 63
+step_window = 63
+expanding = false
+
+[ablation]
+enabled = true
+models_dir = "models/ablation"
+report_path = "logs/ablation_folds.csv"
+summary_path = "logs/ablation_summary.csv"
+v2_downside_penalty = 0.01
+v2_drawdown_penalty = 0.05
+
+[sweep]
+enabled = true
+output_dir = "logs/sweeps/aapl"
+report_path = "logs/sweeps/aapl/ranking.csv"
+downside_grid = [0.0, 0.005, 0.01, 0.02]
+drawdown_grid = [0.0, 0.02, 0.05, 0.1]
+regime_tie_break_tolerance = 0.01
+
+[selection]
+enabled = true
+report_path = "logs/walkforward.csv"
+state_path = "models/current_model.json"
+lookback = 3
+min_gap = 0.0
+allow_average_rule = false
+min_turbulent_steps = 100
+min_turbulent_reward_mean = 0.0
+min_turbulent_win_rate = 0.5
+min_turbulent_equity_factor = 1.0
+max_turbulent_drawdown = 0.15
+
+[visualization]
+enabled = true
+output_path = "logs/reports/control_report.html"
+title = "Mekubbal Research Control Report"
+
+[logging]
+enabled = true
+db_path = "logs/experiments.db"
+symbol = "AAPL"
