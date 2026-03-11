@@ -35,6 +35,11 @@ Primary commands:
 - Build unified dashboard (leaderboards + tickers): `mekubbal-report-tabs --output logs/reports/unified_dashboard.html --leaderboard Stability=logs/multi_symbol_sector/reports/stability_leaderboard.html --tab AAPL=logs/reports/aapl.html --tab MSFT=logs/reports/msft.html`
 - Generate confidence-aware leaderboards: `mekubbal-leaderboards --reports-root logs/multi_symbol_sector/reports --confidence-level 0.95 --bootstrap-samples 2000 --permutation-samples 20000`
 - Compare profiles with paired significance: `mekubbal-profile-compare --profile-report base=logs/profiles/base_walkforward.csv --profile-report hardened=logs/profiles/hardened_walkforward.csv --output-csv logs/profile_compare/pairwise_significance.csv --output-html logs/profile_compare/pairwise_significance.html`
+- Config-driven profile runner: `mekubbal-profile-runner --config configs/profile-runner.toml`
+- Config-driven profile matrix: `mekubbal-profile-matrix --config configs/profile-matrix.toml`
+- Profile auto-selection from matrix outputs: `mekubbal-profile-select --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --state logs/profile_matrix/reports/profile_selection_state.json --base-profile base --candidate-profile candidate --max-candidate-rank 1 --require-candidate-significant`
+- Standalone profile monitoring pass: `mekubbal-profile-monitor --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --selection-state logs/profile_matrix/reports/profile_selection_state.json`
+- Scheduled profile matrix + drift alerts: `mekubbal-profile-schedule --config configs/profile-schedule.toml`
 - Model selection rule: `mekubbal-select --report logs/walkforward.csv --state models/current_model.json --lookback 3 --min-gap 0.0`
 - Regime-aware selection gate example: `mekubbal-select --report logs/walkforward.csv --state models/current_model.json --lookback 3 --min-gap 0.0 --min-turbulent-steps 100 --min-turbulent-win-rate 0.5 --min-turbulent-equity-factor 1.0 --max-turbulent-drawdown 0.15`
 - Config-driven initial loop: `mekubbal-loop --config configs/initial-loop.toml`
@@ -56,6 +61,11 @@ Primary commands:
 - Run config-hardening test file: `pytest tests/test_config_hardening.py -q`
 - Run leaderboards test file: `pytest tests/test_leaderboards.py -q`
 - Run profile-compare test file: `pytest tests/test_profile_compare.py -q`
+- Run profile-runner test file: `pytest tests/test_profile_runner.py -q`
+- Run profile-matrix test file: `pytest tests/test_profile_matrix.py -q`
+- Run profile-selection test file: `pytest tests/test_profile_selection.py -q`
+- Run profile-monitor test file: `pytest tests/test_profile_monitor.py -q`
+- Run profile-schedule test file: `pytest tests/test_profile_schedule.py -q`
 
 ## High-Level Architecture
 
@@ -80,7 +90,13 @@ Data and training flow:
 17. `mekubbal.multi_symbol`: batch runner that applies the control workflow across multiple symbols and writes aggregate summaries.
 18. `mekubbal.config_hardening`: creates versioned config overlays from sweep rankings using `meta.extends`.
 19. `mekubbal.visualization`: static HTML report builder for key experiment artifacts.
-20. `mekubbal.cli.*`: command-line wrappers for download/train/evaluate/paper/retrain/walkforward/ablate/sweep/control/multi-symbol/harden-config/report/report-tabs/diagnostics/select/runs/loop workflow.
+20. `mekubbal.profile_compare`: profile-vs-profile fold-aligned paired significance tooling.
+21. `mekubbal.profile_runner`: config-driven orchestration for multiple profiles on one symbol.
+22. `mekubbal.profile_matrix`: config-driven orchestration for multiple symbols x profiles with cross-symbol aggregation.
+23. `mekubbal.profile_selection`: candidate/base/active profile promotion logic and state persistence.
+24. `mekubbal.profile_monitor`: active profile health snapshots and drift/regression alerts.
+25. `mekubbal.profile_schedule`: recurring orchestration that runs matrix + monitoring outputs.
+26. `mekubbal.cli.*`: command-line wrappers for download/train/evaluate/paper/retrain/walkforward/ablate/sweep/control/multi-symbol/harden-config/report/report-tabs/diagnostics/select/runs/loop/profile workflows.
 
 ## Key Conventions in This Codebase
 

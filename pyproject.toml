@@ -43,6 +43,11 @@ mekubbal-multi-symbol = "mekubbal.cli.multi_symbol:main"
 mekubbal-harden-config = "mekubbal.cli.harden_config:main"
 mekubbal-leaderboards = "mekubbal.cli.leaderboards:main"
 mekubbal-profile-compare = "mekubbal.cli.profile_compare:main"
+mekubbal-profile-runner = "mekubbal.cli.profile_runner:main"
+mekubbal-profile-matrix = "mekubbal.cli.profile_matrix:main"
+mekubbal-profile-select = "mekubbal.cli.profile_select:main"
+mekubbal-profile-monitor = "mekubbal.cli.profile_monitor:main"
+mekubbal-profile-schedule = "mekubbal.cli.profile_schedule:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

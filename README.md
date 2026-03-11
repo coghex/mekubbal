@@ -97,6 +97,38 @@ Compare multiple profile reports for the same symbol with paired significance:
 mekubbal-profile-compare --profile-report base=logs/profiles/base_walkforward.csv --profile-report hardened=logs/profiles/hardened_walkforward.csv --profile-report aggressive=logs/profiles/aggressive_walkforward.csv --output-csv logs/profile_compare/pairwise_significance.csv --output-html logs/profile_compare/pairwise_significance.html
 ```
 
+Config-driven profile runner (execute profile configs + auto-compare):
+
+```bash
+mekubbal-profile-runner --config configs/profile-runner.toml
+```
+
+Config-driven profile matrix (multi-symbol x multi-profile + cross-symbol leaderboards):
+
+```bash
+mekubbal-profile-matrix --config configs/profile-matrix.toml
+```
+
+Auto-select active profile per symbol from matrix outputs (`base` vs `candidate`):
+
+```bash
+mekubbal-profile-select --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --state logs/profile_matrix/reports/profile_selection_state.json --base-profile base --candidate-profile candidate --max-candidate-rank 1 --require-candidate-significant
+```
+
+Scheduled matrix run with active-profile health snapshot + drift alerts:
+
+```bash
+mekubbal-profile-schedule --config configs/profile-schedule.toml
+```
+
+Standalone monitoring pass from existing matrix outputs:
+
+```bash
+mekubbal-profile-monitor --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --selection-state logs/profile_matrix/reports/profile_selection_state.json
+```
+
+The default profile template now uses a distinct candidate config (`configs/research-control.candidate.toml`) so base/candidate comparisons are meaningful out of the box.
+
 ### 5) Hardening configs from sweep winners
 
 Single symbol:
@@ -140,6 +172,11 @@ pytest tests/test_sweep.py -q
 pytest tests/test_config_hardening.py -q
 pytest tests/test_leaderboards.py -q
 pytest tests/test_profile_compare.py -q
+pytest tests/test_profile_runner.py -q
+pytest tests/test_profile_matrix.py -q
+pytest tests/test_profile_selection.py -q
+pytest tests/test_profile_monitor.py -q
+pytest tests/test_profile_schedule.py -q
 ```
 
 ## Typical project outputs (ignored by git)

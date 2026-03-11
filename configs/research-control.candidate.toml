@@ -1,0 +1,16 @@
+[meta]
+extends = "research-control.toml"
+config_version = 3
+profile = "candidate-risk-managed"
+
+[policy]
+risk_penalty = 0.00035
+switch_penalty = 0.0002
+
+[ablation]
+v2_downside_penalty = 0.02
+v2_drawdown_penalty = 0.08
+
+[sweep]
+downside_grid = [0.005, 0.01, 0.02, 0.03]
+drawdown_grid = [0.02, 0.05, 0.08, 0.12]

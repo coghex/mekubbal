@@ -1,0 +1,42 @@
+symbols = ["AAPL", "MSFT", "NVDA"]
+
+[matrix]
+output_root = "logs/profile_matrix"
+symbol_summary_path = "reports/profile_symbol_summary.csv"
+profile_aggregate_csv_path = "reports/profile_aggregate_leaderboard.csv"
+profile_aggregate_html_path = "reports/profile_aggregate_leaderboard.html"
+profile_pairwise_csv_path = "reports/profile_pairwise_across_symbols.csv"
+profile_pairwise_html_path = "reports/profile_pairwise_across_symbols.html"
+dashboard_path = "reports/profile_matrix_workspace.html"
+dashboard_title = "Profile Matrix Workspace"
+build_dashboard = true
+include_symbol_pairwise_leaderboards = true
+
+[base_runner]
+config = "configs/profile-runner.toml"
+output_root_template = "symbols/{symbol_lower}"
+data_path_template = "data/{symbol_lower}.csv"
+refresh = false
+start = ""
+end = ""
+build_symbol_dashboards = true
+
+[comparison]
+confidence_level = 0.95
+bootstrap_samples = 2000
+permutation_samples = 20000
+seed = 7
+aggregate_title = "Cross-Symbol Profile Aggregate Leaderboard"
+pairwise_title = "Cross-Symbol Profile Pairwise Significance"
+
+[promotion]
+enabled = false
+state_path = "reports/profile_selection_state.json"
+base_profile = "base"
+candidate_profile = "candidate"
+min_candidate_gap_vs_base = 0.0
+max_candidate_rank = 1
+require_candidate_significant = false
+forbid_base_significant_better = true
+prefer_previous_active = true
+fallback_profile = "base"
