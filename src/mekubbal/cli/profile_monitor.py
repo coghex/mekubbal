@@ -51,6 +51,24 @@ def main() -> None:
         "--ticker-summary-html",
         help="Optional HTML path for user-friendly ticker health summary",
     )
+    parser.add_argument(
+        "--ensemble-alerts-csv",
+        help="Optional CSV path for ensemble low-confidence/high-vol disagreement alerts",
+    )
+    parser.add_argument(
+        "--ensemble-alerts-html",
+        help="Optional HTML path for ensemble low-confidence/high-vol disagreement alerts",
+    )
+    parser.add_argument(
+        "--ensemble-alerts-history",
+        help="Optional CSV path for full ensemble alert history across runs",
+    )
+    parser.add_argument(
+        "--ensemble-low-confidence-threshold",
+        type=float,
+        default=0.55,
+        help="Alert when ensemble confidence drops below this threshold",
+    )
     parser.add_argument("--lookback-runs", type=int, default=3, help="Prior runs to compare against")
     parser.add_argument(
         "--max-gap-drop",
@@ -81,6 +99,10 @@ def main() -> None:
         drift_alerts_history_path=args.drift_alerts_history,
         ticker_summary_csv_path=args.ticker_summary_csv,
         ticker_summary_html_path=args.ticker_summary_html,
+        ensemble_alerts_csv_path=args.ensemble_alerts_csv,
+        ensemble_alerts_html_path=args.ensemble_alerts_html,
+        ensemble_alerts_history_path=args.ensemble_alerts_history,
+        ensemble_low_confidence_threshold=args.ensemble_low_confidence_threshold,
         lookback_runs=args.lookback_runs,
         max_gap_drop=args.max_gap_drop,
         max_rank_worsening=args.max_rank_worsening,

@@ -122,6 +122,9 @@ mekubbal-profile-schedule --config configs/profile-schedule.toml
 ```
 
 Schedule output includes `ticker_health_summary.csv/html` with plain-language per-ticker status and action hints.
+It also supports optional `ensemble_v3` regime-gated profile blending in schedule configs; when enabled it writes `profile_ensemble_decisions.csv`, `profile_ensemble_history.csv`, and an effective ensemble selection-state JSON.
+Ticker summary now includes selected-vs-ensemble fields (`selected_profile`, `active_profile_source`, regime, and confidence) for operations visibility.
+Schedule now also writes a product-facing dashboard (`product_dashboard.html`) with left ticker navigation, a default system visualization view, ticker-focused performance views, and dense research reports tucked behind advanced dropdown sections.
 
 Daily GitHub Actions schedule config:
 
@@ -130,7 +133,8 @@ mekubbal-profile-schedule --config configs/profile-schedule-daily.toml
 ```
 
 The repository includes `.github/workflows/daily-profile-schedule.yml` to run this daily on GitHub-hosted runners and upload report artifacts.
-It now also deploys the latest reports to GitHub Pages (`/logs/profile_matrix_daily/reports/profile_matrix_workspace.html`), with `index.html` redirecting there.
+It now also deploys the latest reports to GitHub Pages (`/logs/profile_matrix_daily/reports/product_dashboard.html`), with `index.html` redirecting there.
+The Pages landing now links directly to ticker summary and ensemble ops artifacts (`profile_ensemble_decisions.csv`, `profile_ensemble_alerts.html`).
 
 One-time GitHub setup: in **Settings → Pages**, set **Source** to **GitHub Actions**.
 
@@ -141,6 +145,7 @@ mekubbal-profile-monitor --profile-symbol-summary logs/profile_matrix/reports/pr
 ```
 
 This now also supports a plain-language ticker digest (`status`, `recommended_action`, and short summary text) via `--ticker-summary-csv`/`--ticker-summary-html`.
+It can also emit ensemble ops alerts (`low_ensemble_confidence`, `high_vol_profile_disagreement`) via `--ensemble-alerts-csv`/`--ensemble-alerts-html` and optional `--ensemble-alerts-history`.
 
 Rollback recommendation/action when drift alerts persist:
 
@@ -148,11 +153,25 @@ Rollback recommendation/action when drift alerts persist:
 mekubbal-profile-rollback --selection-state logs/profile_matrix/reports/profile_selection_state.json --health-history logs/profile_matrix/reports/active_profile_health_history.csv --min-consecutive-alert-runs 2
 ```
 
+For ensemble-aware rollback policy, add:
+
+```bash
+mekubbal-profile-rollback --selection-state logs/profile_matrix/reports/profile_selection_state.json --health-history logs/profile_matrix/reports/active_profile_health_history.csv --rollback-on-ensemble-events --ensemble-alerts-history logs/profile_matrix/reports/profile_ensemble_alerts_history.csv --min-consecutive-ensemble-event-runs 2
+```
+
 Threshold sweep for promotion + monitoring rules:
 
 ```bash
 mekubbal-profile-threshold-sweep --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --health-history logs/profile_matrix/reports/active_profile_health_history.csv --selection-state logs/profile_matrix/reports/profile_selection_state.json
 ```
+
+Threshold sweep for v3 regime-gated ensemble parameters (writes ranked CSV/HTML + recommended `[ensemble_v3]` JSON block):
+
+```bash
+mekubbal-profile-ensemble-sweep --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --selection-state logs/profile_matrix/reports/profile_selection_state.json --health-history logs/profile_matrix/reports/active_profile_health_history.csv --output-csv logs/profile_matrix/reports/profile_ensemble_sweep.csv --output-html logs/profile_matrix/reports/profile_ensemble_sweep.html --recommendation-json logs/profile_matrix/reports/profile_ensemble_recommendation.json
+```
+
+Recommendation acceptance is now history-gated by default (`--min-history-runs` and `--min-history-runs-per-symbol`).
 
 The default profile template now uses a distinct candidate config (`configs/research-control.candidate.toml`) so base/candidate comparisons are meaningful out of the box.
 

@@ -48,6 +48,33 @@ def main() -> None:
         help="Consecutive alert runs needed before rollback recommendation/action",
     )
     parser.add_argument(
+        "--rollback-on-drift-alerts",
+        action="store_true",
+        default=True,
+        help="Enable drift-alert based rollback trigger (default: enabled)",
+    )
+    parser.add_argument(
+        "--no-rollback-on-drift-alerts",
+        dest="rollback_on_drift_alerts",
+        action="store_false",
+        help="Disable drift-alert based rollback trigger",
+    )
+    parser.add_argument(
+        "--rollback-on-ensemble-events",
+        action="store_true",
+        help="Enable rollback trigger based on consecutive ensemble ops events",
+    )
+    parser.add_argument(
+        "--ensemble-alerts-history",
+        help="Path to profile_ensemble_alerts_history.csv (required with --rollback-on-ensemble-events)",
+    )
+    parser.add_argument(
+        "--min-consecutive-ensemble-event-runs",
+        type=int,
+        default=2,
+        help="Consecutive ensemble-event runs needed before rollback recommendation/action",
+    )
+    parser.add_argument(
         "--rollback-profile",
         help="Profile name to roll back to (default uses selection base profile)",
     )
@@ -70,6 +97,10 @@ def main() -> None:
         max_rank_worsening=args.max_rank_worsening,
         min_active_minus_base_gap=args.min_active_minus_base_gap,
         min_consecutive_alert_runs=args.min_consecutive_alert_runs,
+        rollback_on_drift_alerts=args.rollback_on_drift_alerts,
+        rollback_on_ensemble_events=args.rollback_on_ensemble_events,
+        ensemble_alerts_history_path=args.ensemble_alerts_history,
+        min_consecutive_ensemble_event_runs=args.min_consecutive_ensemble_event_runs,
         rollback_profile=args.rollback_profile,
         apply_rollback=args.apply,
         run_timestamp_utc=args.run_timestamp_utc,

@@ -64,11 +64,16 @@ jobs:
           <head>
             <meta charset="utf-8" />
             <title>Mekubbal Daily Reports</title>
-            <meta http-equiv="refresh" content="0; url=logs/profile_matrix_daily/reports/profile_matrix_workspace.html" />
+            <meta http-equiv="refresh" content="0; url=logs/profile_matrix_daily/reports/product_dashboard.html" />
           </head>
           <body>
-            <p>Redirecting to the latest daily profile workspace...</p>
-            <p><a href="logs/profile_matrix_daily/reports/profile_matrix_workspace.html">Open workspace</a></p>
+            <p>Redirecting to the latest market dashboard...</p>
+            <p><a href="logs/profile_matrix_daily/reports/product_dashboard.html">Open dashboard</a></p>
+            <ul>
+              <li><a href="logs/profile_matrix_daily/reports/ticker_health_summary.html">Ticker health summary</a></li>
+              <li><a href="logs/profile_matrix_daily/reports/profile_ensemble_decisions.csv">Ensemble decisions (CSV)</a></li>
+              <li><a href="logs/profile_matrix_daily/reports/profile_ensemble_alerts.html">Ensemble ops alerts</a></li>
+            </ul>
           </body>
           </html>
           EOF

@@ -537,3 +537,489 @@ def render_ticker_tabs_report(
 """
     output.write_text(document, encoding="utf-8")
     return output
+
+
+def render_product_dashboard(
+    output_path: str | Path,
+    *,
+    ticker_summary_csv_path: str | Path,
+    health_history_path: str | Path,
+    symbol_summary_path: str | Path,
+    title: str = "Mekubbal Market Pulse",
+    global_report_paths: dict[str, str | Path] | None = None,
+) -> Path:
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    base_dir = output.parent.resolve()
+
+    ticker_summary = pd.read_csv(ticker_summary_csv_path)
+    health_history = pd.read_csv(health_history_path)
+    symbol_summary = pd.read_csv(symbol_summary_path)
+    if ticker_summary.empty:
+        raise ValueError("Ticker summary is empty.")
+
+    def _normalize_path(path_like: str | Path) -> str | None:
+        value = str(path_like).strip()
+        if not value:
+            return None
+        if "://" in value:
+            return value
+        file_path = Path(value).expanduser()
+        if not file_path.is_absolute():
+            file_path = (Path.cwd() / file_path).resolve()
+        else:
+            file_path = file_path.resolve()
+        if not file_path.exists():
+            return None
+        try:
+            return file_path.relative_to(base_dir).as_posix()
+        except ValueError:
+            return Path(os.path.relpath(file_path, start=base_dir)).as_posix()
+
+    def _parse_pct_text(value: Any) -> float | None:
+        if value is None:
+            return None
+        text = str(value).strip().replace("%", "")
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    summary = ticker_summary.copy()
+    summary["symbol"] = summary["symbol"].astype(str).str.upper()
+    health = health_history.copy()
+    health["symbol"] = health["symbol"].astype(str).str.upper()
+    health["run_timestamp_utc"] = health["run_timestamp_utc"].astype(str)
+    health["active_gap"] = pd.to_numeric(health.get("active_gap"), errors="coerce")
+    health["selected_gap"] = pd.to_numeric(health.get("selected_gap"), errors="coerce")
+    health["active_rank"] = pd.to_numeric(health.get("active_rank"), errors="coerce")
+    symbol_perf = symbol_summary.copy()
+    symbol_perf["symbol"] = symbol_perf["symbol"].astype(str).str.upper()
+    symbol_perf["symbol_rank"] = pd.to_numeric(symbol_perf.get("symbol_rank"), errors="coerce")
+    symbol_perf["avg_equity_gap"] = pd.to_numeric(symbol_perf.get("avg_equity_gap"), errors="coerce")
+
+    ticker_payload: dict[str, Any] = {}
+    nodes: list[dict[str, Any]] = []
+    for _, row in summary.sort_values("symbol").iterrows():
+        symbol = str(row["symbol"]).upper()
+        status = str(row.get("status", "Healthy"))
+        active_profile = str(row.get("active_profile", ""))
+        selected_profile = str(row.get("selected_profile", active_profile))
+        source = str(row.get("active_profile_source", "selection_state"))
+        regime = str(row.get("ensemble_regime", "") or "")
+        action = str(row.get("recommended_action", ""))
+        summary_text = str(row.get("summary", ""))
+        active_vs_buy = str(row.get("active_vs_buy_and_hold", "n/a"))
+        active_vs_base = str(row.get("active_vs_base", "n/a"))
+        active_rank = int(row.get("active_rank")) if pd.notna(row.get("active_rank")) else None
+        ensemble_confidence = (
+            float(row.get("ensemble_confidence"))
+            if pd.notna(row.get("ensemble_confidence"))
+            else None
+        )
+
+        symbol_health = health[health["symbol"] == symbol].sort_values("run_timestamp_utc")
+        gap_series = [
+            float(value)
+            for value in symbol_health["active_gap"].tolist()
+            if pd.notna(value)
+        ]
+        latest_gap = gap_series[-1] if gap_series else None
+        prev_gap = gap_series[-2] if len(gap_series) > 1 else None
+        momentum = (latest_gap - prev_gap) if latest_gap is not None and prev_gap is not None else None
+        if latest_gap is None:
+            outlook = "Insufficient data"
+        elif latest_gap > 0 and (momentum is None or momentum >= 0):
+            outlook = "Bullish continuation"
+        elif latest_gap > 0:
+            outlook = "Cooling upside"
+        elif momentum is not None and momentum > 0:
+            outlook = "Recovery watch"
+        else:
+            outlook = "Risk-off"
+
+        perf_rows = symbol_perf[symbol_perf["symbol"] == symbol].sort_values(
+            ["symbol_rank", "profile"]
+        )
+        profiles: list[dict[str, Any]] = []
+        for _, perf in perf_rows.iterrows():
+            profile_name = str(perf.get("profile", ""))
+            profiles.append(
+                {
+                    "profile": profile_name,
+                    "rank": int(perf["symbol_rank"]) if pd.notna(perf["symbol_rank"]) else None,
+                    "gap_pct": (
+                        float(perf["avg_equity_gap"]) * 100.0
+                        if pd.notna(perf["avg_equity_gap"])
+                        else None
+                    ),
+                    "visual_report": _normalize_path(perf.get("visual_report_path")),
+                    "pairwise_report": _normalize_path(perf.get("symbol_pairwise_html_path")),
+                }
+            )
+
+        ticker_payload[symbol] = {
+            "symbol": symbol,
+            "status": status,
+            "selected_profile": selected_profile,
+            "active_profile": active_profile,
+            "active_profile_source": source,
+            "regime": regime or None,
+            "ensemble_confidence": ensemble_confidence,
+            "active_rank": active_rank,
+            "active_vs_buy_pct_text": active_vs_buy,
+            "active_vs_base_pct_text": active_vs_base,
+            "action": action,
+            "summary": summary_text,
+            "outlook": outlook,
+            "momentum": momentum,
+            "history": [
+                {
+                    "run_timestamp_utc": str(item["run_timestamp_utc"]),
+                    "active_gap": (
+                        float(item["active_gap"]) if pd.notna(item["active_gap"]) else None
+                    ),
+                    "selected_gap": (
+                        float(item["selected_gap"]) if pd.notna(item["selected_gap"]) else None
+                    ),
+                    "active_rank": (
+                        float(item["active_rank"]) if pd.notna(item["active_rank"]) else None
+                    ),
+                }
+                for _, item in symbol_health.iterrows()
+            ],
+            "profiles": profiles,
+        }
+
+        nodes.append(
+            {
+                "symbol": symbol,
+                "status": status,
+                "active_vs_buy_pct": _parse_pct_text(active_vs_buy),
+                "confidence": ensemble_confidence,
+            }
+        )
+
+    dense_links: list[dict[str, str]] = []
+    if global_report_paths:
+        for label, raw in global_report_paths.items():
+            normalized = _normalize_path(raw)
+            if normalized is None:
+                continue
+            dense_links.append({"label": str(label), "url": normalized})
+    dense_links.sort(key=lambda item: item["label"])
+
+    tickers_sorted = sorted(ticker_payload)
+    if not tickers_sorted:
+        raise ValueError("No ticker rows found for product dashboard.")
+    nav_buttons = "".join(
+        (
+            f"<button id='nav-{ticker}' class='nav-button' "
+            f'onclick="showTicker(\'{ticker}\')">{ticker}</button>'
+        )
+        for ticker in tickers_sorted
+    )
+
+    document = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{html.escape(title)}</title>
+  <style>
+    body {{ margin: 0; font-family: Arial, sans-serif; color: #1f2937; background: #f5f7fb; }}
+    .layout {{ display: grid; grid-template-columns: 250px 1fr; height: 100vh; }}
+    .side {{ background: #101828; color: #e2e8f0; padding: 14px; overflow-y: auto; }}
+    .brand {{ font-size: 14px; font-weight: 700; margin-bottom: 12px; opacity: 0.9; }}
+    .nav-button {{
+      width: 100%; text-align: left; padding: 8px 10px; border: none; border-radius: 8px;
+      margin-bottom: 6px; cursor: pointer; color: #dbeafe; background: #1f2937; font-weight: 600;
+    }}
+    .nav-button.active {{ background: #2563eb; color: #fff; }}
+    .main {{ padding: 14px; overflow: auto; }}
+    .panel {{ display: none; }}
+    .panel.active {{ display: block; }}
+    #system-panel {{ height: calc(100vh - 28px); }}
+    #system-svg {{ width: 100%; height: 100%; background: #0b1220; border-radius: 10px; }}
+    .ticker-header {{ display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
+    .ticker-name {{ font-size: 22px; font-weight: 700; }}
+    .chip {{ border: 1px solid #d0d7e2; border-radius: 999px; padding: 4px 10px; background: #fff; font-size: 12px; }}
+    .cards {{ display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 8px; margin-top: 10px; }}
+    .card {{ background: #fff; border: 1px solid #dbe1ea; border-radius: 8px; padding: 10px; }}
+    .label {{ font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }}
+    .value {{ font-size: 18px; font-weight: 700; margin-top: 3px; }}
+    .tabs {{ display: flex; gap: 8px; margin-top: 14px; }}
+    .tab-btn {{ border: 1px solid #dbe1ea; background: #fff; border-radius: 8px; padding: 6px 10px; cursor: pointer; font-weight: 600; }}
+    .tab-btn.active {{ background: #dbeafe; border-color: #93c5fd; }}
+    .tab-panel {{ display: none; margin-top: 10px; }}
+    .tab-panel.active {{ display: block; }}
+    .chart-wrap {{ background: #fff; border: 1px solid #dbe1ea; border-radius: 8px; padding: 8px; }}
+    #ticker-chart {{ width: 100%; height: 230px; }}
+    table {{ width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #dbe1ea; border-radius: 8px; overflow: hidden; }}
+    th, td {{ border: 1px solid #e5eaf0; padding: 6px 8px; text-align: left; font-size: 13px; }}
+    th {{ background: #f8fafc; }}
+    details {{ background: #fff; border: 1px solid #dbe1ea; border-radius: 8px; padding: 8px; margin-top: 8px; }}
+    details summary {{ cursor: pointer; font-weight: 600; }}
+    .report-list a {{ display: block; margin-top: 6px; color: #1d4ed8; text-decoration: none; }}
+    .preview {{ margin-top: 8px; }}
+    .preview iframe {{ width: 100%; height: 420px; border: 1px solid #dbe1ea; border-radius: 8px; }}
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="side">
+      <div class="brand">{html.escape(title)}</div>
+      <button id="nav-system" class="nav-button active" onclick="showSystem()">SYSTEM</button>
+      {nav_buttons}
+    </aside>
+    <main class="main">
+      <section id="system-panel" class="panel active">
+        <svg id="system-svg"></svg>
+      </section>
+      <section id="ticker-panel" class="panel">
+        <div class="ticker-header">
+          <div class="ticker-name" id="ticker-name"></div>
+          <div class="chip" id="ticker-outlook"></div>
+        </div>
+        <div class="cards">
+          <div class="card"><div class="label">Status</div><div class="value" id="ticker-status"></div></div>
+          <div class="card"><div class="label">Model vs Market</div><div class="value" id="ticker-vs-buy"></div></div>
+          <div class="card"><div class="label">Model vs Base</div><div class="value" id="ticker-vs-base"></div></div>
+          <div class="card"><div class="label">Active Model</div><div class="value" id="ticker-active-model"></div></div>
+        </div>
+        <div class="tabs">
+          <button id="tab-overview" class="tab-btn active" onclick="showTab('overview')">Overview</button>
+          <button id="tab-performance" class="tab-btn" onclick="showTab('performance')">Performance</button>
+          <button id="tab-advanced" class="tab-btn" onclick="showTab('advanced')">Advanced</button>
+        </div>
+        <div id="tab-overview-panel" class="tab-panel active">
+          <div class="card" style="margin-top:10px;">
+            <div class="label">Action</div>
+            <div class="value" id="ticker-action" style="font-size:16px;"></div>
+            <div id="ticker-summary" style="margin-top:6px;font-size:13px;color:#475569;"></div>
+          </div>
+        </div>
+        <div id="tab-performance-panel" class="tab-panel">
+          <div class="chart-wrap">
+            <canvas id="ticker-chart" width="960" height="230"></canvas>
+          </div>
+          <div style="margin-top:8px;">
+            <table>
+              <thead><tr><th>Profile</th><th>Rank</th><th>Gap vs Buy/Hold</th></tr></thead>
+              <tbody id="profile-table"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="tab-advanced-panel" class="tab-panel">
+          <details>
+            <summary>Operational internals</summary>
+            <div id="ops-internals" style="margin-top:8px;font-size:13px;color:#475569;"></div>
+          </details>
+          <details>
+            <summary>Reports and deep-dive pages</summary>
+            <div class="report-list" id="report-links"></div>
+            <div class="preview">
+              <select id="preview-select" onchange="previewReport()" style="width:100%;padding:6px;">
+                <option value="">Preview a report...</option>
+              </select>
+              <iframe id="preview-frame" style="display:none;"></iframe>
+            </div>
+          </details>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script>
+    const systemNodes = {json.dumps(nodes, sort_keys=True)};
+    const tickerData = {json.dumps(ticker_payload, sort_keys=True)};
+    const globalReports = {json.dumps(dense_links, sort_keys=True)};
+    const tickerOrder = {json.dumps(tickers_sorted)};
+    let currentTicker = tickerOrder[0];
+
+    function resetNav(activeId) {{
+      document.querySelectorAll('.nav-button').forEach((btn) => btn.classList.remove('active'));
+      const active = document.getElementById(activeId);
+      if (active) active.classList.add('active');
+    }}
+
+    function showSystem() {{
+      document.getElementById('system-panel').classList.add('active');
+      document.getElementById('ticker-panel').classList.remove('active');
+      resetNav('nav-system');
+      drawSystem();
+    }}
+
+    function showTicker(symbol) {{
+      if (!tickerData[symbol]) return;
+      currentTicker = symbol;
+      document.getElementById('system-panel').classList.remove('active');
+      document.getElementById('ticker-panel').classList.add('active');
+      resetNav(`nav-${{symbol}}`);
+      renderTicker(symbol);
+      showTab('overview');
+    }}
+
+    function showTab(tab) {{
+      ['overview','performance','advanced'].forEach((name) => {{
+        const btn = document.getElementById(`tab-${{name}}`);
+        const panel = document.getElementById(`tab-${{name}}-panel`);
+        const active = name === tab;
+        btn.classList.toggle('active', active);
+        panel.classList.toggle('active', active);
+      }});
+      if (tab === 'performance') drawTickerChart();
+    }}
+
+    function drawSystem() {{
+      const svg = document.getElementById('system-svg');
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      const width = svg.clientWidth || 1000;
+      const height = svg.clientHeight || 600;
+      const centerX = width / 2;
+      const centerY = height / 2;
+      const radius = Math.min(width, height) * 0.3;
+      const ns = 'http://www.w3.org/2000/svg';
+      const hub = document.createElementNS(ns, 'circle');
+      hub.setAttribute('cx', centerX.toString());
+      hub.setAttribute('cy', centerY.toString());
+      hub.setAttribute('r', '28');
+      hub.setAttribute('fill', '#1d4ed8');
+      svg.appendChild(hub);
+      const count = Math.max(systemNodes.length, 1);
+      systemNodes.forEach((node, idx) => {{
+        const angle = (Math.PI * 2 * idx) / count;
+        const x = centerX + radius * Math.cos(angle);
+        const y = centerY + radius * Math.sin(angle);
+        const line = document.createElementNS(ns, 'line');
+        line.setAttribute('x1', centerX.toString());
+        line.setAttribute('y1', centerY.toString());
+        line.setAttribute('x2', x.toString());
+        line.setAttribute('y2', y.toString());
+        line.setAttribute('stroke', '#334155');
+        line.setAttribute('stroke-width', '2');
+        line.setAttribute('opacity', '0.7');
+        svg.appendChild(line);
+        const circle = document.createElementNS(ns, 'circle');
+        const magnitude = Math.abs(node.active_vs_buy_pct || 0);
+        const r = Math.max(16, Math.min(40, 16 + magnitude * 0.5));
+        const statusColor = node.status === 'Critical' ? '#ef4444' : (node.status === 'Watch' ? '#f59e0b' : '#22c55e');
+        circle.setAttribute('cx', x.toString());
+        circle.setAttribute('cy', y.toString());
+        circle.setAttribute('r', r.toString());
+        circle.setAttribute('fill', statusColor);
+        circle.setAttribute('opacity', '0.92');
+        svg.appendChild(circle);
+      }});
+    }}
+
+    function renderTicker(symbol) {{
+      const data = tickerData[symbol];
+      if (!data) return;
+      document.getElementById('ticker-name').textContent = symbol;
+      document.getElementById('ticker-status').textContent = data.status || 'n/a';
+      document.getElementById('ticker-vs-buy').textContent = data.active_vs_buy_pct_text || 'n/a';
+      document.getElementById('ticker-vs-base').textContent = data.active_vs_base_pct_text || 'n/a';
+      document.getElementById('ticker-active-model').textContent = data.active_profile || 'n/a';
+      document.getElementById('ticker-outlook').textContent = data.outlook || 'n/a';
+      document.getElementById('ticker-action').textContent = data.action || 'n/a';
+      document.getElementById('ticker-summary').textContent = data.summary || '';
+
+      const ops = [
+        `Selected profile: ${{data.selected_profile || 'n/a'}}`,
+        `Active source: ${{data.active_profile_source || 'n/a'}}`,
+        `Regime: ${{data.regime || 'n/a'}}`,
+        `Ensemble confidence: ${{data.ensemble_confidence == null ? 'n/a' : data.ensemble_confidence.toFixed(3)}}`
+      ];
+      document.getElementById('ops-internals').innerHTML = ops.map((line) => `<div>${{line}}</div>`).join('');
+
+      const tbody = document.getElementById('profile-table');
+      tbody.innerHTML = '';
+      (data.profiles || []).forEach((item) => {{
+        const tr = document.createElement('tr');
+        const pct = item.gap_pct == null ? 'n/a' : `${{item.gap_pct.toFixed(2)}}%`;
+        tr.innerHTML = `<td>${{item.profile || ''}}</td><td>${{item.rank ?? 'n/a'}}</td><td>${{pct}}</td>`;
+        tbody.appendChild(tr);
+      }});
+
+      const links = [];
+      globalReports.forEach((item) => links.push(item));
+      (data.profiles || []).forEach((item) => {{
+        if (item.visual_report) links.push({{label: `${{symbol}} ${{item.profile}} report`, url: item.visual_report}});
+        if (item.pairwise_report) links.push({{label: `${{symbol}} pairwise`, url: item.pairwise_report}});
+      }});
+
+      const linkWrap = document.getElementById('report-links');
+      linkWrap.innerHTML = '';
+      const preview = document.getElementById('preview-select');
+      preview.innerHTML = '<option value="">Preview a report...</option>';
+      links.forEach((item) => {{
+        const a = document.createElement('a');
+        a.href = item.url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = item.label;
+        linkWrap.appendChild(a);
+        const opt = document.createElement('option');
+        opt.value = item.url;
+        opt.textContent = item.label;
+        preview.appendChild(opt);
+      }});
+      drawTickerChart();
+    }}
+
+    function drawTickerChart() {{
+      const data = tickerData[currentTicker];
+      const canvas = document.getElementById('ticker-chart');
+      const ctx = canvas.getContext('2d');
+      if (!ctx || !data) return;
+      const history = data.history || [];
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const values = history.map((item) => item.active_gap).filter((value) => value != null);
+      if (values.length < 2) return;
+      const minV = Math.min(...values, 0);
+      const maxV = Math.max(...values, 0);
+      const range = Math.max(maxV - minV, 1e-6);
+      const pad = 28;
+      const toX = (i) => pad + (i * (canvas.width - pad * 2)) / (values.length - 1);
+      const toY = (v) => canvas.height - pad - ((v - minV) * (canvas.height - pad * 2)) / range;
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(pad, toY(0));
+      ctx.lineTo(canvas.width - pad, toY(0));
+      ctx.stroke();
+      ctx.strokeStyle = '#1d4ed8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      values.forEach((v, i) => {{
+        const x = toX(i);
+        const y = toY(v);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }});
+      ctx.stroke();
+    }}
+
+    function previewReport() {{
+      const select = document.getElementById('preview-select');
+      const frame = document.getElementById('preview-frame');
+      const src = select.value;
+      if (!src) {{
+        frame.style.display = 'none';
+        frame.removeAttribute('src');
+        return;
+      }}
+      frame.style.display = 'block';
+      frame.src = src;
+    }}
+
+    window.addEventListener('resize', drawSystem);
+    showSystem();
+  </script>
+</body>
+</html>
+"""
+    output.write_text(document, encoding="utf-8")
+    return output

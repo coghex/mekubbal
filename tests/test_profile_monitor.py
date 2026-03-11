@@ -91,5 +91,171 @@ def test_run_profile_monitor_builds_history_and_alerts(tmp_path):
     assert "AAPL" in set(alerts["symbol"])
     assert alerts["reasons"].str.contains("gap_drop_exceeded|active_below_base_threshold").any()
     ticker_summary = pd.read_csv(ticker_summary_csv)
-    assert set(["symbol", "status", "recommended_action", "summary"]).issubset(ticker_summary.columns)
+    assert set(
+        [
+            "symbol",
+            "status",
+            "selected_profile",
+            "active_profile",
+            "active_profile_source",
+            "recommended_action",
+            "summary",
+        ]
+    ).issubset(ticker_summary.columns)
     assert "AAPL" in set(ticker_summary["symbol"])
+
+
+def test_run_profile_monitor_writes_ensemble_outputs(tmp_path):
+    summary_path = tmp_path / "profile_symbol_summary.csv"
+    selection_state_path = tmp_path / "profile_selection_state.json"
+    snapshot_path = tmp_path / "active_profile_health.csv"
+    history_path = tmp_path / "active_profile_health_history.csv"
+    alerts_csv = tmp_path / "profile_drift_alerts.csv"
+    alerts_html = tmp_path / "profile_drift_alerts.html"
+    ensemble_alerts_csv = tmp_path / "profile_ensemble_alerts.csv"
+    ensemble_alerts_html = tmp_path / "profile_ensemble_alerts.html"
+    ensemble_alerts_history = tmp_path / "profile_ensemble_alerts_history.csv"
+    ensemble_decisions_csv = tmp_path / "profile_ensemble_decisions.csv"
+    ensemble_history_csv = tmp_path / "profile_ensemble_history.csv"
+    ensemble_state = tmp_path / "profile_selection_state_ensemble.json"
+
+    pairwise_csv = tmp_path / "pairwise.csv"
+    pd.DataFrame(
+        [
+            {
+                "profile_a": "candidate",
+                "profile_b": "base",
+                "profile_a_better_significant": True,
+                "profile_b_better_significant": False,
+            }
+        ]
+    ).to_csv(pairwise_csv, index=False)
+
+    pd.DataFrame(
+        [
+            {
+                "symbol": "AAPL",
+                "profile": "base",
+                "symbol_rank": 2,
+                "avg_equity_gap": 0.01,
+                "symbol_pairwise_csv_path": str(pairwise_csv),
+            },
+            {
+                "symbol": "AAPL",
+                "profile": "candidate",
+                "symbol_rank": 1,
+                "avg_equity_gap": 0.03,
+                "symbol_pairwise_csv_path": str(pairwise_csv),
+            },
+        ]
+    ).to_csv(summary_path, index=False)
+    selection_state_path.write_text(
+        json.dumps(
+            {
+                "promotion_rule": {"base_profile": "base", "candidate_profile": "candidate"},
+                "active_profiles": {"AAPL": "base"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [
+            {
+                "run_timestamp_utc": "2026-01-01T00:00:00+00:00",
+                "symbol": "AAPL",
+                "active_profile": "base",
+                "active_rank": 3,
+                "active_gap": 0.00,
+                "base_profile": "base",
+                "base_rank": 3,
+                "base_gap": 0.00,
+                "active_minus_base_gap": 0.00,
+                "candidate_profile": "candidate",
+                "candidate_rank": 2,
+                "candidate_gap": 0.01,
+                "promoted": False,
+                "promotion_reasons": "",
+            },
+            {
+                "run_timestamp_utc": "2026-01-02T00:00:00+00:00",
+                "symbol": "AAPL",
+                "active_profile": "base",
+                "active_rank": 2,
+                "active_gap": 0.01,
+                "base_profile": "base",
+                "base_rank": 2,
+                "base_gap": 0.01,
+                "active_minus_base_gap": 0.00,
+                "candidate_profile": "candidate",
+                "candidate_rank": 1,
+                "candidate_gap": 0.03,
+                "promoted": False,
+                "promotion_reasons": "",
+            },
+            {
+                "run_timestamp_utc": "2026-01-03T00:00:00+00:00",
+                "symbol": "AAPL",
+                "active_profile": "base",
+                "active_rank": 1,
+                "active_gap": 0.03,
+                "base_profile": "base",
+                "base_rank": 1,
+                "base_gap": 0.03,
+                "active_minus_base_gap": 0.00,
+                "candidate_profile": "candidate",
+                "candidate_rank": 1,
+                "candidate_gap": 0.03,
+                "promoted": False,
+                "promotion_reasons": "",
+            },
+        ]
+    ).to_csv(history_path, index=False)
+
+    summary = run_profile_monitor(
+        profile_symbol_summary_path=summary_path,
+        selection_state_path=selection_state_path,
+        health_snapshot_path=snapshot_path,
+        health_history_path=history_path,
+        drift_alerts_csv_path=alerts_csv,
+        drift_alerts_html_path=alerts_html,
+        lookback_runs=1,
+        max_gap_drop=0.05,
+        max_rank_worsening=2.0,
+        min_active_minus_base_gap=-0.5,
+        run_timestamp_utc="2026-01-04T00:00:00+00:00",
+        ensemble_v3_config={
+            "enabled": True,
+            "lookback_runs": 3,
+            "min_regime_confidence": 0.1,
+            "rank_weight": 0.55,
+            "gap_weight": 0.45,
+            "significance_bonus": 0.1,
+            "fallback_profile": "base",
+            "profile_weights": {"base": 1.0, "candidate": 1.2},
+            "regime_multipliers": {"trending": {"candidate": 1.2, "base": 0.95}},
+            "high_vol_gap_std_threshold": 0.03,
+            "high_vol_rank_std_threshold": 0.75,
+            "trending_min_gap_improvement": 0.005,
+            "trending_min_rank_improvement": 0.25,
+        },
+        ensemble_decisions_csv_path=ensemble_decisions_csv,
+        ensemble_history_path=ensemble_history_csv,
+        ensemble_effective_selection_state_path=ensemble_state,
+        ensemble_alerts_csv_path=ensemble_alerts_csv,
+        ensemble_alerts_html_path=ensemble_alerts_html,
+        ensemble_alerts_history_path=ensemble_alerts_history,
+        ensemble_low_confidence_threshold=0.6,
+    )
+    assert Path(summary["ensemble_effective_selection_state_path"]).exists()
+    assert summary["ensemble_v3_summary"] is not None
+    assert Path(summary["ensemble_v3_summary"]["decisions_csv_path"]).exists()
+    assert Path(summary["ensemble_alerts_csv_path"]).exists()
+    assert Path(summary["ensemble_alerts_html_path"]).exists()
+    assert Path(summary["ensemble_alerts_history_path"]).exists()
+    assert int(summary["ensemble_alerts_history_count"]) >= int(summary["ensemble_alerts_count"])
+    snapshot = pd.read_csv(snapshot_path)
+    row = snapshot.iloc[0].to_dict()
+    assert row["selected_profile"] == "base"
+    assert row["active_profile"] == "candidate"
+    assert row["active_profile_source"] == "ensemble_v3"
+    assert row["ensemble_regime"] in {"high_vol", "trending"}

@@ -45,12 +45,20 @@ def run_profile_rollback(
     max_rank_worsening: float,
     min_active_minus_base_gap: float,
     min_consecutive_alert_runs: int = 2,
+    rollback_on_drift_alerts: bool = True,
+    rollback_on_ensemble_events: bool = False,
+    ensemble_alerts_history_path: str | Path | None = None,
+    min_consecutive_ensemble_event_runs: int = 2,
     rollback_profile: str | None = None,
     apply_rollback: bool = False,
     run_timestamp_utc: str | None = None,
 ) -> dict[str, Any]:
     if int(min_consecutive_alert_runs) < 1:
         raise ValueError("min_consecutive_alert_runs must be >= 1.")
+    if int(min_consecutive_ensemble_event_runs) < 1:
+        raise ValueError("min_consecutive_ensemble_event_runs must be >= 1.")
+    if not bool(rollback_on_drift_alerts) and not bool(rollback_on_ensemble_events):
+        raise ValueError("Enable rollback_on_drift_alerts or rollback_on_ensemble_events.")
 
     selection_path = Path(selection_state_path)
     selection = _load_json(selection_path)
@@ -88,6 +96,27 @@ def run_profile_rollback(
     if not alerts.empty:
         for _, row in alerts.iterrows():
             alert_lookup[(str(row["symbol"]).upper(), str(row["run_timestamp_utc"]))] = True
+    ensemble_alert_lookup: dict[tuple[str, str], bool] = {}
+    if bool(rollback_on_ensemble_events):
+        if ensemble_alerts_history_path is None:
+            raise ValueError(
+                "ensemble_alerts_history_path is required when rollback_on_ensemble_events=true."
+            )
+        ensemble_history_path = Path(ensemble_alerts_history_path)
+        if not ensemble_history_path.exists():
+            raise FileNotFoundError(
+                f"Ensemble alerts history does not exist: {ensemble_history_path}"
+            )
+        ensemble_history = pd.read_csv(ensemble_history_path)
+        if not ensemble_history.empty:
+            if "symbol" not in ensemble_history.columns or "run_timestamp_utc" not in ensemble_history.columns:
+                raise ValueError(
+                    "Ensemble alerts history must include symbol and run_timestamp_utc columns."
+                )
+            for _, row in ensemble_history.iterrows():
+                ensemble_alert_lookup[
+                    (str(row["symbol"]).upper(), str(row["run_timestamp_utc"]))
+                ] = True
 
     target_profile = str(
         rollback_profile
@@ -107,8 +136,21 @@ def run_profile_rollback(
             run_times=runs_up_to_latest,
             alert_lookup=alert_lookup,
         )
+        consecutive_ensemble = _consecutive_alert_runs(
+            symbol=symbol,
+            run_times=runs_up_to_latest,
+            alert_lookup=ensemble_alert_lookup,
+        )
         latest_alert = bool(alert_lookup.get((symbol, effective_run_time), False))
-        should_rollback = bool(consecutive >= int(min_consecutive_alert_runs))
+        latest_ensemble_alert = bool(ensemble_alert_lookup.get((symbol, effective_run_time), False))
+        drift_triggered = bool(
+            bool(rollback_on_drift_alerts) and consecutive >= int(min_consecutive_alert_runs)
+        )
+        ensemble_triggered = bool(
+            bool(rollback_on_ensemble_events)
+            and consecutive_ensemble >= int(min_consecutive_ensemble_event_runs)
+        )
+        should_rollback = bool(drift_triggered or ensemble_triggered)
         rollback_action = "none"
         if should_rollback:
             rollback_recommended_count += 1
@@ -126,6 +168,11 @@ def run_profile_rollback(
                 "latest_alert": latest_alert,
                 "consecutive_alert_runs": int(consecutive),
                 "min_consecutive_alert_runs": int(min_consecutive_alert_runs),
+                "latest_ensemble_alert": latest_ensemble_alert,
+                "consecutive_ensemble_event_runs": int(consecutive_ensemble),
+                "min_consecutive_ensemble_event_runs": int(min_consecutive_ensemble_event_runs),
+                "drift_triggered": bool(drift_triggered),
+                "ensemble_triggered": bool(ensemble_triggered),
                 "should_rollback": should_rollback,
                 "action": rollback_action,
             }
@@ -144,6 +191,14 @@ def run_profile_rollback(
         },
         "rollback_rule": {
             "min_consecutive_alert_runs": int(min_consecutive_alert_runs),
+            "rollback_on_drift_alerts": bool(rollback_on_drift_alerts),
+            "rollback_on_ensemble_events": bool(rollback_on_ensemble_events),
+            "ensemble_alerts_history_path": (
+                str(Path(ensemble_alerts_history_path).resolve())
+                if ensemble_alerts_history_path is not None
+                else None
+            ),
+            "min_consecutive_ensemble_event_runs": int(min_consecutive_ensemble_event_runs),
             "rollback_profile": target_profile,
             "apply_rollback": bool(apply_rollback),
         },

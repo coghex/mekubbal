@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+from mekubbal.profile_ensemble import compute_regime_gated_ensemble
 
 
 def _now_utc_iso() -> str:
@@ -27,6 +30,8 @@ def _build_active_snapshot(
     selection_state: dict[str, Any],
     *,
     run_timestamp_utc: str,
+    active_profiles_override: dict[str, str] | None = None,
+    ensemble_decisions: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     required = {"symbol", "profile", "symbol_rank", "avg_equity_gap"}
     missing = sorted(required - set(symbol_summary.columns))
@@ -35,8 +40,8 @@ def _build_active_snapshot(
     if symbol_summary.empty:
         raise ValueError("Profile symbol summary is empty.")
 
-    active_profiles = selection_state.get("active_profiles", {})
-    if not isinstance(active_profiles, dict):
+    selected_profiles = selection_state.get("active_profiles", {})
+    if not isinstance(selected_profiles, dict):
         raise ValueError("profile_selection_state.active_profiles must be an object.")
     promotion_rule = selection_state.get("promotion_rule", {})
     base_profile = str(promotion_rule.get("base_profile", "base"))
@@ -48,6 +53,19 @@ def _build_active_snapshot(
             if not isinstance(item, dict) or "symbol" not in item:
                 continue
             by_symbol_decision[str(item["symbol"]).upper()] = item
+    by_symbol_ensemble: dict[str, dict[str, Any]] = {}
+    if ensemble_decisions is not None and not ensemble_decisions.empty:
+        for _, item in ensemble_decisions.iterrows():
+            symbol = str(item.get("symbol", "")).upper()
+            if not symbol:
+                continue
+            by_symbol_ensemble[symbol] = {
+                "regime": item.get("regime"),
+                "regime_confidence": item.get("regime_confidence"),
+                "ensemble_confidence": item.get("ensemble_confidence"),
+                "decision_reason": item.get("decision_reason"),
+                "gated_by_regime": item.get("gated_by_regime"),
+            }
 
     frame = symbol_summary.copy()
     frame["symbol"] = frame["symbol"].astype(str).str.upper()
@@ -59,13 +77,23 @@ def _build_active_snapshot(
     for symbol, group in frame.groupby("symbol"):
         sorted_group = group.sort_values("symbol_rank").reset_index(drop=True)
         by_profile = {str(row["profile"]): row for _, row in sorted_group.iterrows()}
-        active = str(active_profiles.get(symbol) or "")
-        if not active or active not in by_profile:
-            active = str(sorted_group.iloc[0]["profile"])
+        selected = str(selected_profiles.get(symbol) or "")
+        if not selected or selected not in by_profile:
+            selected = str(sorted_group.iloc[0]["profile"])
+        active = selected
+        active_source = "selection_state"
+        if active_profiles_override is not None:
+            override_profile = str(active_profiles_override.get(symbol) or "")
+            if override_profile and override_profile in by_profile:
+                active = override_profile
+                if active != selected:
+                    active_source = "ensemble_v3"
         active_row = by_profile[active]
+        selected_row = by_profile[selected]
         base_row = by_profile.get(base_profile)
         candidate_row = by_profile.get(candidate_profile)
         decision = by_symbol_decision.get(symbol, {})
+        ensemble_meta = by_symbol_ensemble.get(symbol, {})
 
         base_gap = float(base_row["avg_equity_gap"]) if base_row is not None else None
         active_gap = float(active_row["avg_equity_gap"])
@@ -73,9 +101,18 @@ def _build_active_snapshot(
             {
                 "run_timestamp_utc": run_timestamp_utc,
                 "symbol": symbol,
+                "selected_profile": selected,
+                "selected_rank": int(selected_row["symbol_rank"]),
+                "selected_gap": float(selected_row["avg_equity_gap"]),
                 "active_profile": active,
+                "active_profile_source": active_source,
                 "active_rank": int(active_row["symbol_rank"]),
                 "active_gap": active_gap,
+                "ensemble_regime": ensemble_meta.get("regime"),
+                "ensemble_regime_confidence": ensemble_meta.get("regime_confidence"),
+                "ensemble_confidence": ensemble_meta.get("ensemble_confidence"),
+                "ensemble_decision_reason": ensemble_meta.get("decision_reason"),
+                "ensemble_gated_by_regime": ensemble_meta.get("gated_by_regime"),
                 "base_profile": base_profile if base_row is not None else None,
                 "base_rank": int(base_row["symbol_rank"]) if base_row is not None else None,
                 "base_gap": base_gap,
@@ -206,6 +243,81 @@ def compute_drift_alert_history(
     )
 
 
+def compute_ensemble_alert_history(
+    health_history: pd.DataFrame,
+    *,
+    low_confidence_threshold: float,
+) -> pd.DataFrame:
+    columns = [
+        "symbol",
+        "run_timestamp_utc",
+        "active_profile",
+        "selected_profile",
+        "ensemble_regime",
+        "ensemble_regime_confidence",
+        "ensemble_confidence",
+        "reasons",
+    ]
+    required = {
+        "symbol",
+        "run_timestamp_utc",
+        "active_profile",
+        "selected_profile",
+        "ensemble_regime",
+        "ensemble_confidence",
+    }
+    if float(low_confidence_threshold) < 0 or float(low_confidence_threshold) > 1:
+        raise ValueError("low_confidence_threshold must be in [0, 1].")
+    if not required.issubset(health_history.columns):
+        return pd.DataFrame(columns=columns)
+
+    frame = health_history.copy()
+    frame["symbol"] = frame["symbol"].astype(str).str.upper()
+    frame["run_timestamp_utc"] = frame["run_timestamp_utc"].astype(str)
+    frame["ensemble_confidence"] = pd.to_numeric(frame["ensemble_confidence"], errors="coerce")
+    frame["ensemble_regime_confidence"] = pd.to_numeric(
+        frame.get("ensemble_regime_confidence"),
+        errors="coerce",
+    )
+
+    rows: list[dict[str, Any]] = []
+    for _, row in frame.iterrows():
+        reasons: list[str] = []
+        ensemble_confidence = (
+            float(row["ensemble_confidence"]) if pd.notna(row["ensemble_confidence"]) else None
+        )
+        regime = str(row.get("ensemble_regime") or "")
+        selected = str(row.get("selected_profile") or "")
+        active = str(row.get("active_profile") or "")
+        if ensemble_confidence is not None and ensemble_confidence < float(low_confidence_threshold):
+            reasons.append("low_ensemble_confidence")
+        if regime == "high_vol" and selected and active and selected != active:
+            reasons.append("high_vol_profile_disagreement")
+        if not reasons:
+            continue
+        rows.append(
+            {
+                "symbol": str(row["symbol"]).upper(),
+                "run_timestamp_utc": str(row["run_timestamp_utc"]),
+                "active_profile": active,
+                "selected_profile": selected,
+                "ensemble_regime": regime,
+                "ensemble_regime_confidence": (
+                    float(row["ensemble_regime_confidence"])
+                    if pd.notna(row["ensemble_regime_confidence"])
+                    else None
+                ),
+                "ensemble_confidence": ensemble_confidence,
+                "reasons": ";".join(reasons),
+            }
+        )
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows, columns=columns).sort_values(["symbol", "run_timestamp_utc"]).reset_index(
+        drop=True
+    )
+
+
 def _html_table(title: str, note: str, frame: pd.DataFrame) -> str:
     return f"""<!doctype html>
 <html lang="en">
@@ -257,6 +369,17 @@ def _build_ticker_summary(snapshot: pd.DataFrame, alerts: pd.DataFrame) -> pd.Da
     for _, row in snapshot.sort_values("symbol").iterrows():
         symbol = str(row["symbol"]).upper()
         reasons = alert_map.get(symbol, [])
+        selected_profile = str(row.get("selected_profile") or row.get("active_profile"))
+        active_profile = str(row["active_profile"])
+        regime = str(row.get("ensemble_regime") or "")
+        ensemble_confidence = (
+            float(row["ensemble_confidence"]) if pd.notna(row.get("ensemble_confidence")) else None
+        )
+        regime_confidence = (
+            float(row["ensemble_regime_confidence"])
+            if pd.notna(row.get("ensemble_regime_confidence"))
+            else None
+        )
         active_gap = float(row["active_gap"])
         active_minus_base = (
             float(row["active_minus_base_gap"])
@@ -283,14 +406,26 @@ def _build_ticker_summary(snapshot: pd.DataFrame, alerts: pd.DataFrame) -> pd.Da
         base_profile = row.get("base_profile")
         base_profile_text = str(base_profile) if pd.notna(base_profile) else "base"
         summary_text = (
-            f"{row['active_profile']} vs buy-and-hold {_format_pct_points(active_gap)}; "
+            f"{active_profile} vs buy-and-hold {_format_pct_points(active_gap)}; "
             f"vs {base_profile_text} {_format_pct_points(active_minus_base)}."
         )
+        if selected_profile != active_profile:
+            summary_text += f" Ensemble override from {selected_profile} to {active_profile}."
         rows.append(
             {
                 "symbol": symbol,
                 "status": status,
-                "active_profile": str(row["active_profile"]),
+                "selected_profile": selected_profile,
+                "active_profile": active_profile,
+                "active_profile_source": str(row.get("active_profile_source") or "selection_state"),
+                "ensemble_regime": regime or None,
+                "ensemble_regime_confidence": regime_confidence,
+                "ensemble_confidence": ensemble_confidence,
+                "ensemble_decision_reason": (
+                    str(row.get("ensemble_decision_reason"))
+                    if pd.notna(row.get("ensemble_decision_reason"))
+                    else None
+                ),
                 "active_rank": int(row["active_rank"]),
                 "active_vs_buy_and_hold": _format_pct_points(active_gap),
                 "active_vs_base": _format_pct_points(active_minus_base),
@@ -319,6 +454,14 @@ def run_profile_monitor(
     max_rank_worsening: float = 0.75,
     min_active_minus_base_gap: float = -0.01,
     run_timestamp_utc: str | None = None,
+    ensemble_v3_config: dict[str, Any] | None = None,
+    ensemble_decisions_csv_path: str | Path | None = None,
+    ensemble_history_path: str | Path | None = None,
+    ensemble_effective_selection_state_path: str | Path | None = None,
+    ensemble_alerts_csv_path: str | Path | None = None,
+    ensemble_alerts_html_path: str | Path | None = None,
+    ensemble_alerts_history_path: str | Path | None = None,
+    ensemble_low_confidence_threshold: float = 0.55,
 ) -> dict[str, Any]:
     summary_path = Path(profile_symbol_summary_path)
     if not summary_path.exists():
@@ -327,16 +470,141 @@ def run_profile_monitor(
     selection_state = _load_profile_selection_state(selection_state_path)
     run_time = run_timestamp_utc or _now_utc_iso()
 
+    ensemble_summary: dict[str, Any] | None = None
+    active_profiles_override: dict[str, str] | None = None
+    effective_selection_state_written: str | None = None
+    ensemble_decisions_for_snapshot: pd.DataFrame | None = None
+    if ensemble_v3_config is not None and bool(ensemble_v3_config.get("enabled", False)):
+        if (
+            ensemble_decisions_csv_path is None
+            or ensemble_history_path is None
+            or ensemble_effective_selection_state_path is None
+        ):
+            raise ValueError(
+                "ensemble_decisions_csv_path, ensemble_history_path, and "
+                "ensemble_effective_selection_state_path are required when ensemble_v3 is enabled."
+            )
+
+        history_for_regime = (
+            pd.read_csv(health_history_path)
+            if Path(health_history_path).exists()
+            else pd.DataFrame(
+                columns=["symbol", "run_timestamp_utc", "active_gap", "active_rank"]
+            )
+        )
+        ensemble_result = compute_regime_gated_ensemble(
+            symbol_summary,
+            selection_state,
+            history_for_regime,
+            lookback_runs=int(ensemble_v3_config["lookback_runs"]),
+            min_regime_confidence=float(ensemble_v3_config["min_regime_confidence"]),
+            rank_weight=float(ensemble_v3_config["rank_weight"]),
+            gap_weight=float(ensemble_v3_config["gap_weight"]),
+            significance_bonus=float(ensemble_v3_config["significance_bonus"]),
+            fallback_profile=str(ensemble_v3_config["fallback_profile"]),
+            profile_weights=dict(ensemble_v3_config["profile_weights"]),
+            regime_multipliers=dict(ensemble_v3_config["regime_multipliers"]),
+            high_vol_gap_std_threshold=float(ensemble_v3_config["high_vol_gap_std_threshold"]),
+            high_vol_rank_std_threshold=float(ensemble_v3_config["high_vol_rank_std_threshold"]),
+            trending_min_gap_improvement=float(ensemble_v3_config["trending_min_gap_improvement"]),
+            trending_min_rank_improvement=float(ensemble_v3_config["trending_min_rank_improvement"]),
+        )
+        active_profiles_override = dict(ensemble_result["ensembled_profiles"])
+        ensemble_decisions = ensemble_result["decisions"].copy()
+        ensemble_decisions_for_snapshot = ensemble_decisions.copy()
+        ensemble_decisions.insert(0, "run_timestamp_utc", run_time)
+
+        decisions_path = Path(ensemble_decisions_csv_path)
+        decisions_path.parent.mkdir(parents=True, exist_ok=True)
+        ensemble_decisions.to_csv(decisions_path, index=False)
+
+        history_path = Path(ensemble_history_path)
+        history_written = _append_history(ensemble_decisions, history_path)
+
+        effective_state = deepcopy(selection_state)
+        effective_state["active_profiles"] = active_profiles_override
+        effective_state["ensemble_v3"] = {
+            "enabled": True,
+            "run_timestamp_utc": run_time,
+            "source_selection_state_path": str(Path(selection_state_path).resolve()),
+            "decisions_csv_path": str(decisions_path),
+        }
+        effective_state_path = Path(ensemble_effective_selection_state_path)
+        effective_state_path.parent.mkdir(parents=True, exist_ok=True)
+        effective_state_path.write_text(
+            json.dumps(effective_state, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        effective_selection_state_written = str(effective_state_path)
+        ensemble_summary = {
+            "enabled": True,
+            "decisions_csv_path": str(decisions_path),
+            "history_path": str(history_path),
+            "history_rows": int(len(history_written)),
+            "effective_selection_state_path": effective_selection_state_written,
+            "symbols_ensembled": int(len(active_profiles_override)),
+            "regimes": ensemble_result["regimes"],
+        }
+
     snapshot = _build_active_snapshot(
         symbol_summary,
         selection_state,
         run_timestamp_utc=run_time,
+        active_profiles_override=active_profiles_override,
+        ensemble_decisions=ensemble_decisions_for_snapshot,
     )
     snapshot_path = Path(health_snapshot_path)
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
     snapshot.to_csv(snapshot_path, index=False)
 
     history = _append_history(snapshot, health_history_path)
+    ensemble_alert_history_written = None
+    ensemble_alerts_csv_written = None
+    ensemble_alerts_html_written = None
+    ensemble_alerts_count = 0
+    ensemble_alerts_history_count = 0
+    if (
+        ensemble_alerts_csv_path is not None
+        or ensemble_alerts_html_path is not None
+        or ensemble_alerts_history_path is not None
+    ):
+        if ensemble_alerts_csv_path is None or ensemble_alerts_html_path is None:
+            raise ValueError(
+                "ensemble_alerts_csv_path and ensemble_alerts_html_path must be provided together."
+            )
+        all_ensemble_alerts = compute_ensemble_alert_history(
+            history,
+            low_confidence_threshold=float(ensemble_low_confidence_threshold),
+        )
+        current_ensemble_alerts = all_ensemble_alerts[
+            all_ensemble_alerts["run_timestamp_utc"].astype(str) == str(run_time)
+        ].copy()
+        ensemble_csv = Path(ensemble_alerts_csv_path)
+        ensemble_html = Path(ensemble_alerts_html_path)
+        ensemble_csv.parent.mkdir(parents=True, exist_ok=True)
+        ensemble_html.parent.mkdir(parents=True, exist_ok=True)
+        current_ensemble_alerts.to_csv(ensemble_csv, index=False)
+        ensemble_html.write_text(
+            _html_table(
+                "Ensemble Ops Alerts",
+                (
+                    "Alerts fire for low ensemble confidence or high-vol profile disagreement. "
+                    f"low_confidence_threshold={float(ensemble_low_confidence_threshold)}."
+                ),
+                current_ensemble_alerts,
+            ),
+            encoding="utf-8",
+        )
+        if ensemble_alerts_history_path is not None:
+            ensemble_history_file = Path(ensemble_alerts_history_path)
+            ensemble_history_file.parent.mkdir(parents=True, exist_ok=True)
+            all_ensemble_alerts.to_csv(ensemble_history_file, index=False)
+            ensemble_alert_history_written = str(ensemble_history_file)
+        ensemble_alerts_csv_written = str(ensemble_csv)
+        ensemble_alerts_html_written = str(ensemble_html)
+        ensemble_alerts_count = int(len(current_ensemble_alerts))
+        ensemble_alerts_history_count = int(len(all_ensemble_alerts))
+
     all_alerts = compute_drift_alert_history(
         history,
         lookback_runs=int(lookback_runs),
@@ -411,4 +679,11 @@ def run_profile_monitor(
         "history_rows": int(len(history)),
         "alerts_count": int(len(alerts)),
         "alerts_history_count": int(len(all_alerts)),
+        "ensemble_alerts_csv_path": ensemble_alerts_csv_written,
+        "ensemble_alerts_html_path": ensemble_alerts_html_written,
+        "ensemble_alerts_history_path": ensemble_alert_history_written,
+        "ensemble_alerts_count": ensemble_alerts_count,
+        "ensemble_alerts_history_count": ensemble_alerts_history_count,
+        "ensemble_v3_summary": ensemble_summary,
+        "ensemble_effective_selection_state_path": effective_selection_state_written,
     }

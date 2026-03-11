@@ -6,8 +6,13 @@ health_history_path = "reports/active_profile_health_history.csv"
 drift_alerts_csv_path = "reports/profile_drift_alerts.csv"
 drift_alerts_html_path = "reports/profile_drift_alerts.html"
 drift_alerts_history_path = "reports/profile_drift_alerts_history.csv"
+ensemble_alerts_csv_path = "reports/profile_ensemble_alerts.csv"
+ensemble_alerts_html_path = "reports/profile_ensemble_alerts.html"
+ensemble_alerts_history_path = "reports/profile_ensemble_alerts_history.csv"
 ticker_summary_csv_path = "reports/ticker_health_summary.csv"
 ticker_summary_html_path = "reports/ticker_health_summary.html"
+product_dashboard_path = "reports/product_dashboard.html"
+product_dashboard_title = "Mekubbal Market Pulse"
 summary_json_path = "reports/profile_schedule_summary.json"
 
 [monitor]
@@ -15,10 +20,46 @@ lookback_runs = 3
 max_gap_drop = 0.03
 max_rank_worsening = 0.75
 min_active_minus_base_gap = -0.01
+ensemble_low_confidence_threshold = 0.55
 
 [rollback]
 enabled = false
 rollback_state_path = "reports/profile_rollback_state.json"
 min_consecutive_alert_runs = 2
+rollback_on_drift_alerts = true
+rollback_on_ensemble_events = true
+min_consecutive_ensemble_event_runs = 2
 rollback_profile = "base"
 apply_rollback = false
+
+[ensemble_v3]
+enabled = false
+lookback_runs = 3
+min_regime_confidence = 0.55
+rank_weight = 0.55
+gap_weight = 0.45
+significance_bonus = 0.1
+fallback_profile = "base"
+high_vol_gap_std_threshold = 0.03
+high_vol_rank_std_threshold = 0.75
+trending_min_gap_improvement = 0.01
+trending_min_rank_improvement = 0.25
+decision_csv_path = "reports/profile_ensemble_decisions.csv"
+decision_history_path = "reports/profile_ensemble_history.csv"
+effective_selection_state_path = "reports/profile_selection_state_ensemble.json"
+
+[ensemble_v3.profile_weights]
+base = 1.0
+candidate = 1.15
+
+[ensemble_v3.regime_multipliers.stable]
+base = 1.0
+candidate = 1.0
+
+[ensemble_v3.regime_multipliers.trending]
+base = 0.95
+candidate = 1.2
+
+[ensemble_v3.regime_multipliers.high_vol]
+base = 1.2
+candidate = 0.85
