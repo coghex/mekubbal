@@ -286,3 +286,120 @@ fallback_profile = "base"
     assert str(captured["base_profile"]) == "base"
     assert str(captured["candidate_profile"]) == "candidate"
     assert str(captured["state_path"]).endswith("reports/selection_state.json")
+
+
+def test_run_profile_matrix_applies_promotion_override(monkeypatch, tmp_path):
+    import mekubbal.profile_matrix as matrix_module
+
+    control = tmp_path / "control.toml"
+    profile_runner = tmp_path / "profile-runner.toml"
+    matrix_config = tmp_path / "profile-matrix.toml"
+    control.write_text("[data]\npath='unused.csv'\n", encoding="utf-8")
+    profile_runner.write_text(
+        f"""
+[[profiles]]
+name = "base"
+config = "{control}"
+
+[[profiles]]
+name = "candidate"
+config = "{control}"
+""".strip(),
+        encoding="utf-8",
+    )
+    matrix_config.write_text(
+        f"""
+symbols = ["AAPL"]
+
+[matrix]
+output_root = "{tmp_path / "out"}"
+build_dashboard = false
+
+[base_runner]
+config = "{profile_runner}"
+output_root_template = "symbols/{{symbol_lower}}"
+data_path_template = "data/{{symbol_lower}}.csv"
+refresh = false
+start = ""
+end = ""
+build_symbol_dashboards = false
+
+[comparison]
+confidence_level = 0.9
+bootstrap_samples = 300
+permutation_samples = 1000
+seed = 11
+aggregate_title = "Aggregate"
+pairwise_title = "Pairwise"
+
+[promotion]
+enabled = false
+state_path = "reports/selection_state.json"
+base_profile = "base"
+candidate_profile = "candidate"
+min_candidate_gap_vs_base = 0.0
+max_candidate_rank = 1
+require_candidate_significant = false
+forbid_base_significant_better = true
+prefer_previous_active = true
+fallback_profile = "base"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    def fake_run_profile_runner_config(config, *, config_dir, config_label):
+        _ = config, config_dir, config_label
+        out_root = tmp_path / "out" / "symbols" / "aapl"
+        out_root.mkdir(parents=True, exist_ok=True)
+        pairwise_csv = out_root / "pairwise.csv"
+        pairwise_html = out_root / "pairwise.html"
+        pd.DataFrame(
+            {
+                "profile_a": ["candidate"],
+                "profile_b": ["base"],
+                "profile_a_better_significant": [True],
+                "profile_b_better_significant": [False],
+            }
+        ).to_csv(pairwise_csv, index=False)
+        pairwise_html.write_text("<html>pairwise</html>", encoding="utf-8")
+        return {
+            "pairwise_summary": {
+                "output_csv_path": str(pairwise_csv),
+                "output_html_path": str(pairwise_html),
+            },
+            "dashboard_path": None,
+            "profiles": [
+                {
+                    "profile": "base",
+                    "profile_slug": "base",
+                    "walkforward_report_path": str(out_root / "walk_base.csv"),
+                    "visual_report_path": str(out_root / "base.html"),
+                    "walkforward_avg_policy_final_equity": 1.01,
+                    "walkforward_avg_buy_and_hold_equity": 1.0,
+                },
+                {
+                    "profile": "candidate",
+                    "profile_slug": "candidate",
+                    "walkforward_report_path": str(out_root / "walk_candidate.csv"),
+                    "visual_report_path": str(out_root / "candidate.html"),
+                    "walkforward_avg_policy_final_equity": 1.03,
+                    "walkforward_avg_buy_and_hold_equity": 1.0,
+                },
+            ],
+        }
+
+    captured: dict[str, object] = {}
+
+    def fake_run_profile_promotion(**kwargs):
+        captured.update(kwargs)
+        return {"state_path": str(tmp_path / "out" / "reports" / "shadow_selection_state.json")}
+
+    monkeypatch.setattr(matrix_module, "run_profile_runner_config", fake_run_profile_runner_config)
+    monkeypatch.setattr(matrix_module, "run_profile_promotion", fake_run_profile_promotion)
+
+    summary = run_profile_matrix(
+        matrix_config,
+        promotion_override={"enabled": True, "state_path": "reports/shadow_selection_state.json"},
+    )
+    assert summary["profile_selection"] is not None
+    assert str(captured["state_path"]).endswith("reports/shadow_selection_state.json")

@@ -124,6 +124,7 @@ mekubbal-profile-schedule --config configs/profile-schedule.toml
 Schedule output includes `ticker_health_summary.csv/html` with plain-language per-ticker status and action hints.
 It also supports optional `ensemble_v3` regime-gated profile blending in schedule configs; when enabled it writes `profile_ensemble_decisions.csv`, `profile_ensemble_history.csv`, and an effective ensemble selection-state JSON.
 Ticker summary now includes selected-vs-ensemble fields (`selected_profile`, `active_profile_source`, regime, and confidence) for operations visibility.
+It also supports optional shadow evaluation via `[shadow]`: schedule runs matrix promotion into a separate shadow state, runs monitor+ensemble against both production and shadow states, writes `profile_shadow_comparison.csv/html` + `profile_shadow_gate.json`, and can gate production-state mutation until a fixed agreement window passes.
 Schedule now also writes a product-facing dashboard (`product_dashboard.html`) with left ticker navigation, a default system visualization view, ticker-focused performance views, and dense research reports tucked behind advanced dropdown sections.
 
 Daily GitHub Actions schedule config:

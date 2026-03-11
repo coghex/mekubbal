@@ -63,3 +63,28 @@ candidate = 1.2
 [ensemble_v3.regime_multipliers.high_vol]
 base = 1.2
 candidate = 0.85
+
+[shadow]
+enabled = false
+production_state_path = ""
+shadow_state_path = "reports/profile_selection_state_shadow.json"
+window_runs = 5
+min_match_ratio = 1.0
+apply_promotion_after_shadow = false
+comparison_csv_path = "reports/profile_shadow_comparison.csv"
+comparison_html_path = "reports/profile_shadow_comparison.html"
+comparison_history_path = "reports/profile_shadow_comparison_history.csv"
+gate_json_path = "reports/profile_shadow_gate.json"
+health_snapshot_path = "reports/shadow_active_profile_health.csv"
+health_history_path = "reports/shadow_active_profile_health_history.csv"
+drift_alerts_csv_path = "reports/shadow_profile_drift_alerts.csv"
+drift_alerts_html_path = "reports/shadow_profile_drift_alerts.html"
+drift_alerts_history_path = "reports/shadow_profile_drift_alerts_history.csv"
+ensemble_alerts_csv_path = "reports/shadow_profile_ensemble_alerts.csv"
+ensemble_alerts_html_path = "reports/shadow_profile_ensemble_alerts.html"
+ensemble_alerts_history_path = "reports/shadow_profile_ensemble_alerts_history.csv"
+ticker_summary_csv_path = "reports/shadow_ticker_health_summary.csv"
+ticker_summary_html_path = "reports/shadow_ticker_health_summary.html"
+ensemble_decision_csv_path = "reports/shadow_profile_ensemble_decisions.csv"
+ensemble_history_path = "reports/shadow_profile_ensemble_history.csv"
+effective_selection_state_path = "reports/profile_selection_state_shadow_ensemble.json"

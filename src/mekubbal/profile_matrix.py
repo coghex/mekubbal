@@ -337,12 +337,22 @@ def _aggregate_profile_rows(symbol_profile_rows: pd.DataFrame, pairwise_rows: pd
     return ranked
 
 
-def run_profile_matrix(config_path: str | Path, *, symbols_override: list[str] | None = None) -> dict[str, Any]:
+def run_profile_matrix(
+    config_path: str | Path,
+    *,
+    symbols_override: list[str] | None = None,
+    promotion_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     config_file = Path(config_path).resolve()
     config = load_profile_matrix_config(config_file)
     config_dir = config_file.parent
     if symbols_override is not None:
         config["symbols"] = [str(value).strip().upper() for value in symbols_override]
+        _validate_profile_matrix_config(config, config_dir=config_dir)
+    if promotion_override is not None:
+        if not isinstance(promotion_override, dict):
+            raise ValueError("promotion_override must be a mapping when provided.")
+        _deep_merge(config["promotion"], promotion_override)
         _validate_profile_matrix_config(config, config_dir=config_dir)
 
     matrix_cfg = config["matrix"]

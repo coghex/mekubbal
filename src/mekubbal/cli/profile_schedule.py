@@ -8,7 +8,7 @@ from mekubbal.profile_schedule import run_profile_schedule
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Run profile matrix workflow and emit health/drift alerts for active profiles."
+            "Run profile matrix workflow with monitoring, optional shadow gating, and drift alerts."
         )
     )
     parser.add_argument(

@@ -44,6 +44,7 @@ Primary commands:
 - Profile v3 ensemble sweep (history-gated recommendation): `mekubbal-profile-ensemble-sweep --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --selection-state logs/profile_matrix/reports/profile_selection_state.json --health-history logs/profile_matrix/reports/active_profile_health_history.csv --output-csv logs/profile_matrix/reports/profile_ensemble_sweep.csv --output-html logs/profile_matrix/reports/profile_ensemble_sweep.html --recommendation-json logs/profile_matrix/reports/profile_ensemble_recommendation.json --min-history-runs 5 --min-history-runs-per-symbol 5`
 - Scheduled profile matrix + drift alerts: `mekubbal-profile-schedule --config configs/profile-schedule.toml`
 - Optional v3 regime-gated ensemble is configured via `[ensemble_v3]` in profile-schedule configs.
+- Optional shadow gating is configured via `[shadow]` in profile-schedule configs (compares production vs shadow active/ensemble decisions before mutating production state).
 - Schedule runs now also emit a product-facing `reports/product_dashboard.html` view (ticker-first UX with advanced sections for dense reports).
 - Daily schedule profile run (GitHub Actions config): `mekubbal-profile-schedule --config configs/profile-schedule-daily.toml`
 - GitHub workflow `.github/workflows/daily-profile-schedule.yml` now also deploys reports to GitHub Pages.
