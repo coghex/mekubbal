@@ -39,6 +39,10 @@ def main() -> None:
         default="logs/profile_matrix/reports/profile_drift_alerts.html",
         help="Output HTML for drift/regression alerts",
     )
+    parser.add_argument(
+        "--drift-alerts-history",
+        help="Optional CSV path for full drift alert history across runs",
+    )
     parser.add_argument("--lookback-runs", type=int, default=3, help="Prior runs to compare against")
     parser.add_argument(
         "--max-gap-drop",
@@ -66,6 +70,7 @@ def main() -> None:
         health_history_path=args.health_history,
         drift_alerts_csv_path=args.drift_alerts_csv,
         drift_alerts_html_path=args.drift_alerts_html,
+        drift_alerts_history_path=args.drift_alerts_history,
         lookback_runs=args.lookback_runs,
         max_gap_drop=args.max_gap_drop,
         max_rank_worsening=args.max_rank_worsening,

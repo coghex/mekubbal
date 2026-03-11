@@ -141,50 +141,68 @@ def _alert_rows(
         ordered = group.sort_values("run_timestamp_utc").reset_index(drop=True)
         if len(ordered) <= lookback_runs:
             continue
-        latest = ordered.iloc[-1]
-        baseline = ordered.iloc[-(lookback_runs + 1) : -1]
-        baseline_gap = float(baseline["active_gap"].mean())
-        baseline_rank = float(baseline["active_rank"].mean())
-        latest_gap = float(latest["active_gap"])
-        latest_rank = float(latest["active_rank"])
-        latest_minus_base = (
-            float(latest["active_minus_base_gap"])
-            if pd.notna(latest["active_minus_base_gap"])
-            else None
-        )
+        for idx in range(int(lookback_runs), len(ordered)):
+            latest = ordered.iloc[idx]
+            baseline = ordered.iloc[idx - int(lookback_runs) : idx]
+            baseline_gap = float(baseline["active_gap"].mean())
+            baseline_rank = float(baseline["active_rank"].mean())
+            latest_gap = float(latest["active_gap"])
+            latest_rank = float(latest["active_rank"])
+            latest_minus_base = (
+                float(latest["active_minus_base_gap"])
+                if pd.notna(latest["active_minus_base_gap"])
+                else None
+            )
 
-        gap_drop = baseline_gap - latest_gap
-        rank_worsening = latest_rank - baseline_rank
-        reasons: list[str] = []
-        if gap_drop > max_gap_drop:
-            reasons.append("gap_drop_exceeded")
-        if rank_worsening > max_rank_worsening:
-            reasons.append("rank_worsening_exceeded")
-        if latest_minus_base is not None and latest_minus_base < min_active_minus_base_gap:
-            reasons.append("active_below_base_threshold")
-        if not reasons:
-            continue
-        rows.append(
-            {
-                "symbol": symbol,
-                "run_timestamp_utc": str(latest["run_timestamp_utc"]),
-                "active_profile": str(latest["active_profile"]),
-                "latest_active_gap": latest_gap,
-                "baseline_active_gap": baseline_gap,
-                "gap_drop": gap_drop,
-                "latest_active_rank": latest_rank,
-                "baseline_active_rank": baseline_rank,
-                "rank_worsening": rank_worsening,
-                "latest_active_minus_base_gap": latest_minus_base,
-                "reasons": ";".join(reasons),
-            }
-        )
+            gap_drop = baseline_gap - latest_gap
+            rank_worsening = latest_rank - baseline_rank
+            reasons: list[str] = []
+            if gap_drop > max_gap_drop:
+                reasons.append("gap_drop_exceeded")
+            if rank_worsening > max_rank_worsening:
+                reasons.append("rank_worsening_exceeded")
+            if latest_minus_base is not None and latest_minus_base < min_active_minus_base_gap:
+                reasons.append("active_below_base_threshold")
+            if not reasons:
+                continue
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "run_timestamp_utc": str(latest["run_timestamp_utc"]),
+                    "active_profile": str(latest["active_profile"]),
+                    "latest_active_gap": latest_gap,
+                    "baseline_active_gap": baseline_gap,
+                    "gap_drop": gap_drop,
+                    "latest_active_rank": latest_rank,
+                    "baseline_active_rank": baseline_rank,
+                    "rank_worsening": rank_worsening,
+                    "latest_active_minus_base_gap": latest_minus_base,
+                    "reasons": ";".join(reasons),
+                }
+            )
     if not rows:
         return pd.DataFrame(columns=columns)
     return (
         pd.DataFrame(rows, columns=columns)
         .sort_values(["symbol", "run_timestamp_utc"])
         .reset_index(drop=True)
+    )
+
+
+def compute_drift_alert_history(
+    health_history: pd.DataFrame,
+    *,
+    lookback_runs: int,
+    max_gap_drop: float,
+    max_rank_worsening: float,
+    min_active_minus_base_gap: float,
+) -> pd.DataFrame:
+    return _alert_rows(
+        history=health_history,
+        lookback_runs=lookback_runs,
+        max_gap_drop=max_gap_drop,
+        max_rank_worsening=max_rank_worsening,
+        min_active_minus_base_gap=min_active_minus_base_gap,
     )
 
 
@@ -219,6 +237,7 @@ def run_profile_monitor(
     health_history_path: str | Path,
     drift_alerts_csv_path: str | Path,
     drift_alerts_html_path: str | Path,
+    drift_alerts_history_path: str | Path | None = None,
     lookback_runs: int = 3,
     max_gap_drop: float = 0.03,
     max_rank_worsening: float = 0.75,
@@ -242,13 +261,14 @@ def run_profile_monitor(
     snapshot.to_csv(snapshot_path, index=False)
 
     history = _append_history(snapshot, health_history_path)
-    alerts = _alert_rows(
+    all_alerts = compute_drift_alert_history(
         history,
         lookback_runs=int(lookback_runs),
         max_gap_drop=float(max_gap_drop),
         max_rank_worsening=float(max_rank_worsening),
         min_active_minus_base_gap=float(min_active_minus_base_gap),
     )
+    alerts = all_alerts[all_alerts["run_timestamp_utc"].astype(str) == str(run_time)].copy()
 
     alerts_csv = Path(drift_alerts_csv_path)
     alerts_html = Path(drift_alerts_html_path)
@@ -265,6 +285,12 @@ def run_profile_monitor(
         _html_table("Profile Drift Alerts", note, alerts),
         encoding="utf-8",
     )
+    alert_history_written = None
+    if drift_alerts_history_path is not None:
+        alert_history = Path(drift_alerts_history_path)
+        alert_history.parent.mkdir(parents=True, exist_ok=True)
+        all_alerts.to_csv(alert_history, index=False)
+        alert_history_written = str(alert_history)
 
     return {
         "run_timestamp_utc": run_time,
@@ -272,7 +298,9 @@ def run_profile_monitor(
         "health_history_path": str(Path(health_history_path)),
         "drift_alerts_csv_path": str(alerts_csv),
         "drift_alerts_html_path": str(alerts_html),
+        "drift_alerts_history_path": alert_history_written,
         "symbols_in_snapshot": int(len(snapshot)),
         "history_rows": int(len(history)),
         "alerts_count": int(len(alerts)),
+        "alerts_history_count": int(len(all_alerts)),
     }

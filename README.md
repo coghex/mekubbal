@@ -127,6 +127,18 @@ Standalone monitoring pass from existing matrix outputs:
 mekubbal-profile-monitor --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --selection-state logs/profile_matrix/reports/profile_selection_state.json
 ```
 
+Rollback recommendation/action when drift alerts persist:
+
+```bash
+mekubbal-profile-rollback --selection-state logs/profile_matrix/reports/profile_selection_state.json --health-history logs/profile_matrix/reports/active_profile_health_history.csv --min-consecutive-alert-runs 2
+```
+
+Threshold sweep for promotion + monitoring rules:
+
+```bash
+mekubbal-profile-threshold-sweep --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --health-history logs/profile_matrix/reports/active_profile_health_history.csv --selection-state logs/profile_matrix/reports/profile_selection_state.json
+```
+
 The default profile template now uses a distinct candidate config (`configs/research-control.candidate.toml`) so base/candidate comparisons are meaningful out of the box.
 
 ### 5) Hardening configs from sweep winners
@@ -177,6 +189,8 @@ pytest tests/test_profile_matrix.py -q
 pytest tests/test_profile_selection.py -q
 pytest tests/test_profile_monitor.py -q
 pytest tests/test_profile_schedule.py -q
+pytest tests/test_profile_rollback.py -q
+pytest tests/test_profile_threshold_sweep.py -q
 ```
 
 ## Typical project outputs (ignored by git)

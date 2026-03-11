@@ -47,7 +47,9 @@ mekubbal-profile-runner = "mekubbal.cli.profile_runner:main"
 mekubbal-profile-matrix = "mekubbal.cli.profile_matrix:main"
 mekubbal-profile-select = "mekubbal.cli.profile_select:main"
 mekubbal-profile-monitor = "mekubbal.cli.profile_monitor:main"
+mekubbal-profile-rollback = "mekubbal.cli.profile_rollback:main"
 mekubbal-profile-schedule = "mekubbal.cli.profile_schedule:main"
+mekubbal-profile-threshold-sweep = "mekubbal.cli.profile_threshold_sweep:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

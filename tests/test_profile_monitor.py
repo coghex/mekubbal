@@ -15,6 +15,7 @@ def test_run_profile_monitor_builds_history_and_alerts(tmp_path):
     history_path = tmp_path / "active_profile_health_history.csv"
     alerts_csv = tmp_path / "profile_drift_alerts.csv"
     alerts_html = tmp_path / "profile_drift_alerts.html"
+    alerts_history = tmp_path / "profile_drift_alerts_history.csv"
 
     pd.DataFrame(
         [
@@ -41,6 +42,7 @@ def test_run_profile_monitor_builds_history_and_alerts(tmp_path):
         health_history_path=history_path,
         drift_alerts_csv_path=alerts_csv,
         drift_alerts_html_path=alerts_html,
+        drift_alerts_history_path=alerts_history,
         lookback_runs=1,
         max_gap_drop=0.01,
         max_rank_worsening=0.5,
@@ -48,7 +50,9 @@ def test_run_profile_monitor_builds_history_and_alerts(tmp_path):
         run_timestamp_utc="2026-01-01T00:00:00+00:00",
     )
     assert first["alerts_count"] == 0
+    assert first["alerts_history_count"] == 0
     assert Path(first["health_history_path"]).exists()
+    assert Path(first["drift_alerts_history_path"]).exists()
 
     pd.DataFrame(
         [
@@ -66,6 +70,7 @@ def test_run_profile_monitor_builds_history_and_alerts(tmp_path):
         health_history_path=history_path,
         drift_alerts_csv_path=alerts_csv,
         drift_alerts_html_path=alerts_html,
+        drift_alerts_history_path=alerts_history,
         lookback_runs=1,
         max_gap_drop=0.01,
         max_rank_worsening=0.5,
@@ -73,6 +78,7 @@ def test_run_profile_monitor_builds_history_and_alerts(tmp_path):
         run_timestamp_utc="2026-01-02T00:00:00+00:00",
     )
     assert second["alerts_count"] >= 1
+    assert second["alerts_history_count"] >= second["alerts_count"]
     alerts = pd.read_csv(alerts_csv)
     assert "AAPL" in set(alerts["symbol"])
     assert alerts["reasons"].str.contains("gap_drop_exceeded|active_below_base_threshold").any()

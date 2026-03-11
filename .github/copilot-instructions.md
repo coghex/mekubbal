@@ -39,6 +39,8 @@ Primary commands:
 - Config-driven profile matrix: `mekubbal-profile-matrix --config configs/profile-matrix.toml`
 - Profile auto-selection from matrix outputs: `mekubbal-profile-select --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --state logs/profile_matrix/reports/profile_selection_state.json --base-profile base --candidate-profile candidate --max-candidate-rank 1 --require-candidate-significant`
 - Standalone profile monitoring pass: `mekubbal-profile-monitor --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --selection-state logs/profile_matrix/reports/profile_selection_state.json`
+- Profile rollback on persistent alerts: `mekubbal-profile-rollback --selection-state logs/profile_matrix/reports/profile_selection_state.json --health-history logs/profile_matrix/reports/active_profile_health_history.csv --min-consecutive-alert-runs 2`
+- Profile threshold sweep: `mekubbal-profile-threshold-sweep --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --health-history logs/profile_matrix/reports/active_profile_health_history.csv --selection-state logs/profile_matrix/reports/profile_selection_state.json`
 - Scheduled profile matrix + drift alerts: `mekubbal-profile-schedule --config configs/profile-schedule.toml`
 - Model selection rule: `mekubbal-select --report logs/walkforward.csv --state models/current_model.json --lookback 3 --min-gap 0.0`
 - Regime-aware selection gate example: `mekubbal-select --report logs/walkforward.csv --state models/current_model.json --lookback 3 --min-gap 0.0 --min-turbulent-steps 100 --min-turbulent-win-rate 0.5 --min-turbulent-equity-factor 1.0 --max-turbulent-drawdown 0.15`
@@ -66,6 +68,8 @@ Primary commands:
 - Run profile-selection test file: `pytest tests/test_profile_selection.py -q`
 - Run profile-monitor test file: `pytest tests/test_profile_monitor.py -q`
 - Run profile-schedule test file: `pytest tests/test_profile_schedule.py -q`
+- Run profile-rollback test file: `pytest tests/test_profile_rollback.py -q`
+- Run profile-threshold-sweep test file: `pytest tests/test_profile_threshold_sweep.py -q`
 
 ## High-Level Architecture
 
@@ -95,8 +99,10 @@ Data and training flow:
 22. `mekubbal.profile_matrix`: config-driven orchestration for multiple symbols x profiles with cross-symbol aggregation.
 23. `mekubbal.profile_selection`: candidate/base/active profile promotion logic and state persistence.
 24. `mekubbal.profile_monitor`: active profile health snapshots and drift/regression alerts.
-25. `mekubbal.profile_schedule`: recurring orchestration that runs matrix + monitoring outputs.
-26. `mekubbal.cli.*`: command-line wrappers for download/train/evaluate/paper/retrain/walkforward/ablate/sweep/control/multi-symbol/harden-config/report/report-tabs/diagnostics/select/runs/loop/profile workflows.
+25. `mekubbal.profile_rollback`: persistent-alert rollback recommendations and optional state mutation.
+26. `mekubbal.profile_threshold_sweep`: promotion/monitor threshold grid search with tradeoff ranking.
+27. `mekubbal.profile_schedule`: recurring orchestration that runs matrix + monitoring outputs.
+28. `mekubbal.cli.*`: command-line wrappers for download/train/evaluate/paper/retrain/walkforward/ablate/sweep/control/multi-symbol/harden-config/report/report-tabs/diagnostics/select/runs/loop/profile workflows.
 
 ## Key Conventions in This Codebase
 

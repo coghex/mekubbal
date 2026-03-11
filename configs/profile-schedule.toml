@@ -5,6 +5,7 @@ health_snapshot_path = "reports/active_profile_health.csv"
 health_history_path = "reports/active_profile_health_history.csv"
 drift_alerts_csv_path = "reports/profile_drift_alerts.csv"
 drift_alerts_html_path = "reports/profile_drift_alerts.html"
+drift_alerts_history_path = "reports/profile_drift_alerts_history.csv"
 summary_json_path = "reports/profile_schedule_summary.json"
 
 [monitor]
@@ -12,3 +13,10 @@ lookback_runs = 3
 max_gap_drop = 0.03
 max_rank_worsening = 0.75
 min_active_minus_base_gap = -0.01
+
+[rollback]
+enabled = false
+rollback_state_path = "reports/profile_rollback_state.json"
+min_consecutive_alert_runs = 2
+rollback_profile = "base"
+apply_rollback = false
