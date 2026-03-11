@@ -130,6 +130,9 @@ mekubbal-profile-schedule --config configs/profile-schedule-daily.toml
 ```
 
 The repository includes `.github/workflows/daily-profile-schedule.yml` to run this daily on GitHub-hosted runners and upload report artifacts.
+It now also deploys the latest reports to GitHub Pages (`/logs/profile_matrix_daily/reports/profile_matrix_workspace.html`), with `index.html` redirecting there.
+
+One-time GitHub setup: in **Settings → Pages**, set **Source** to **GitHub Actions**.
 
 Standalone monitoring pass from existing matrix outputs:
 

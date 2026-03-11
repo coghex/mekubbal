@@ -8,8 +8,12 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: daily-profile-pages
+  cancel-in-progress: false
+
 jobs:
-  run-daily-profile-schedule:
+  build-reports:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -48,3 +52,42 @@ jobs:
             logs/profile_matrix_daily/reports/**
             logs/profile_matrix_daily/symbols/*/reports/**
           if-no-files-found: error
+
+      - name: Prepare GitHub Pages site
+        run: |
+          rm -rf site
+          mkdir -p site/logs
+          cp -R logs/profile_matrix_daily site/logs/profile_matrix_daily
+          cat > site/index.html <<'EOF'
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8" />
+            <title>Mekubbal Daily Reports</title>
+            <meta http-equiv="refresh" content="0; url=logs/profile_matrix_daily/reports/profile_matrix_workspace.html" />
+          </head>
+          <body>
+            <p>Redirecting to the latest daily profile workspace...</p>
+            <p><a href="logs/profile_matrix_daily/reports/profile_matrix_workspace.html">Open workspace</a></p>
+          </body>
+          </html>
+          EOF
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy-pages:
+    needs: build-reports
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

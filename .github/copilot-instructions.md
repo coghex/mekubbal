@@ -43,6 +43,7 @@ Primary commands:
 - Profile threshold sweep: `mekubbal-profile-threshold-sweep --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --health-history logs/profile_matrix/reports/active_profile_health_history.csv --selection-state logs/profile_matrix/reports/profile_selection_state.json`
 - Scheduled profile matrix + drift alerts: `mekubbal-profile-schedule --config configs/profile-schedule.toml`
 - Daily schedule profile run (GitHub Actions config): `mekubbal-profile-schedule --config configs/profile-schedule-daily.toml`
+- GitHub workflow `.github/workflows/daily-profile-schedule.yml` now also deploys reports to GitHub Pages.
 - Model selection rule: `mekubbal-select --report logs/walkforward.csv --state models/current_model.json --lookback 3 --min-gap 0.0`
 - Regime-aware selection gate example: `mekubbal-select --report logs/walkforward.csv --state models/current_model.json --lookback 3 --min-gap 0.0 --min-turbulent-steps 100 --min-turbulent-win-rate 0.5 --min-turbulent-equity-factor 1.0 --max-turbulent-drawdown 0.15`
 - Config-driven initial loop: `mekubbal-loop --config configs/initial-loop.toml`
