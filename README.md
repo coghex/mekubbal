@@ -121,11 +121,23 @@ Scheduled matrix run with active-profile health snapshot + drift alerts:
 mekubbal-profile-schedule --config configs/profile-schedule.toml
 ```
 
+Schedule output includes `ticker_health_summary.csv/html` with plain-language per-ticker status and action hints.
+
+Daily GitHub Actions schedule config:
+
+```bash
+mekubbal-profile-schedule --config configs/profile-schedule-daily.toml
+```
+
+The repository includes `.github/workflows/daily-profile-schedule.yml` to run this daily on GitHub-hosted runners and upload report artifacts.
+
 Standalone monitoring pass from existing matrix outputs:
 
 ```bash
 mekubbal-profile-monitor --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --selection-state logs/profile_matrix/reports/profile_selection_state.json
 ```
+
+This now also supports a plain-language ticker digest (`status`, `recommended_action`, and short summary text) via `--ticker-summary-csv`/`--ticker-summary-html`.
 
 Rollback recommendation/action when drift alerts persist:
 

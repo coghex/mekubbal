@@ -22,6 +22,8 @@ def _default_profile_schedule_config() -> dict[str, Any]:
             "drift_alerts_csv_path": "reports/profile_drift_alerts.csv",
             "drift_alerts_html_path": "reports/profile_drift_alerts.html",
             "drift_alerts_history_path": "reports/profile_drift_alerts_history.csv",
+            "ticker_summary_csv_path": "reports/ticker_health_summary.csv",
+            "ticker_summary_html_path": "reports/ticker_health_summary.html",
             "summary_json_path": "reports/profile_schedule_summary.json",
         },
         "monitor": {
@@ -53,7 +55,10 @@ def _resolve_path(base_dir: Path, raw_path: str | Path) -> Path:
     path = Path(raw_path).expanduser()
     if path.is_absolute():
         return path.resolve()
-    return (base_dir / path).resolve()
+    from_config_dir = (base_dir / path).resolve()
+    if from_config_dir.exists():
+        return from_config_dir
+    return path.resolve()
 
 
 def _parse_symbols(values: list[Any]) -> list[str]:
@@ -140,6 +145,8 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
         drift_alerts_csv_path=matrix_output_root / str(schedule_cfg["drift_alerts_csv_path"]),
         drift_alerts_html_path=matrix_output_root / str(schedule_cfg["drift_alerts_html_path"]),
         drift_alerts_history_path=matrix_output_root / str(schedule_cfg["drift_alerts_history_path"]),
+        ticker_summary_csv_path=matrix_output_root / str(schedule_cfg["ticker_summary_csv_path"]),
+        ticker_summary_html_path=matrix_output_root / str(schedule_cfg["ticker_summary_html_path"]),
         lookback_runs=int(monitor_cfg["lookback_runs"]),
         max_gap_drop=float(monitor_cfg["max_gap_drop"]),
         max_rank_worsening=float(monitor_cfg["max_rank_worsening"]),

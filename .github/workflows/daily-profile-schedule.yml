@@ -1,0 +1,50 @@
+name: Daily Profile Schedule
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  run-daily-profile-schedule:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Download daily symbol data
+        run: |
+          END_DATE="$(date -u +%F)"
+          for SYMBOL in AAPL MSFT NVDA; do
+            mekubbal-download \
+              --symbol "${SYMBOL}" \
+              --start 2018-01-01 \
+              --end "${END_DATE}" \
+              --output "data/${SYMBOL,,}.csv"
+          done
+
+      - name: Run daily schedule
+        run: mekubbal-profile-schedule --config configs/profile-schedule-daily.toml
+
+      - name: Upload daily reports artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-profile-reports
+          path: |
+            logs/profile_matrix_daily/reports/**
+            logs/profile_matrix_daily/symbols/*/reports/**
+          if-no-files-found: error

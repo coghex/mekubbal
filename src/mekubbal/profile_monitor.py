@@ -229,6 +229,80 @@ def _html_table(title: str, note: str, frame: pd.DataFrame) -> str:
 """
 
 
+def _format_pct_points(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{float(value) * 100.0:+.2f}%"
+
+
+def _reason_to_label(reason: str) -> str:
+    mapping = {
+        "gap_drop_exceeded": "recent performance drop",
+        "rank_worsening_exceeded": "profile rank worsened",
+        "active_below_base_threshold": "active profile below base threshold",
+    }
+    return mapping.get(reason, reason)
+
+
+def _build_ticker_summary(snapshot: pd.DataFrame, alerts: pd.DataFrame) -> pd.DataFrame:
+    alert_map: dict[str, list[str]] = {}
+    if not alerts.empty:
+        for _, row in alerts.iterrows():
+            symbol = str(row["symbol"]).upper()
+            raw = str(row.get("reasons", ""))
+            reasons = [value.strip() for value in raw.split(";") if value.strip()]
+            alert_map[symbol] = reasons
+
+    rows: list[dict[str, Any]] = []
+    for _, row in snapshot.sort_values("symbol").iterrows():
+        symbol = str(row["symbol"]).upper()
+        reasons = alert_map.get(symbol, [])
+        active_gap = float(row["active_gap"])
+        active_minus_base = (
+            float(row["active_minus_base_gap"])
+            if pd.notna(row["active_minus_base_gap"])
+            else None
+        )
+        promoted = bool(row.get("promoted", False))
+        has_alert = bool(reasons)
+
+        if has_alert and (
+            "active_below_base_threshold" in reasons
+            or (active_minus_base is not None and active_minus_base < 0)
+        ):
+            status = "Critical"
+            recommended_action = "Review rollback recommendation and consider reverting to base."
+        elif has_alert:
+            status = "Watch"
+            recommended_action = "Monitor next run and re-check promotion/monitor thresholds."
+        else:
+            status = "Healthy"
+            recommended_action = "Keep current active profile."
+
+        reason_labels = ", ".join(_reason_to_label(value) for value in reasons) if reasons else "none"
+        base_profile = row.get("base_profile")
+        base_profile_text = str(base_profile) if pd.notna(base_profile) else "base"
+        summary_text = (
+            f"{row['active_profile']} vs buy-and-hold {_format_pct_points(active_gap)}; "
+            f"vs {base_profile_text} {_format_pct_points(active_minus_base)}."
+        )
+        rows.append(
+            {
+                "symbol": symbol,
+                "status": status,
+                "active_profile": str(row["active_profile"]),
+                "active_rank": int(row["active_rank"]),
+                "active_vs_buy_and_hold": _format_pct_points(active_gap),
+                "active_vs_base": _format_pct_points(active_minus_base),
+                "promoted_this_run": bool(promoted),
+                "alert_reasons": reason_labels,
+                "recommended_action": recommended_action,
+                "summary": summary_text,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def run_profile_monitor(
     *,
     profile_symbol_summary_path: str | Path,
@@ -238,6 +312,8 @@ def run_profile_monitor(
     drift_alerts_csv_path: str | Path,
     drift_alerts_html_path: str | Path,
     drift_alerts_history_path: str | Path | None = None,
+    ticker_summary_csv_path: str | Path | None = None,
+    ticker_summary_html_path: str | Path | None = None,
     lookback_runs: int = 3,
     max_gap_drop: float = 0.03,
     max_rank_worsening: float = 0.75,
@@ -292,6 +368,35 @@ def run_profile_monitor(
         all_alerts.to_csv(alert_history, index=False)
         alert_history_written = str(alert_history)
 
+    ticker_summary_written_csv = None
+    ticker_summary_written_html = None
+    ticker_status_counts: dict[str, int] = {}
+    if ticker_summary_csv_path is not None or ticker_summary_html_path is not None:
+        if ticker_summary_csv_path is None or ticker_summary_html_path is None:
+            raise ValueError(
+                "ticker_summary_csv_path and ticker_summary_html_path must be provided together."
+            )
+        ticker_summary = _build_ticker_summary(snapshot, alerts)
+        summary_csv = Path(ticker_summary_csv_path)
+        summary_html = Path(ticker_summary_html_path)
+        summary_csv.parent.mkdir(parents=True, exist_ok=True)
+        summary_html.parent.mkdir(parents=True, exist_ok=True)
+        ticker_summary.to_csv(summary_csv, index=False)
+        summary_html.write_text(
+            _html_table(
+                "Ticker Health Summary",
+                "Plain-language status per ticker from active profile health and current run alerts.",
+                ticker_summary,
+            ),
+            encoding="utf-8",
+        )
+        ticker_summary_written_csv = str(summary_csv)
+        ticker_summary_written_html = str(summary_html)
+        ticker_status_counts = {
+            str(status): int(count)
+            for status, count in ticker_summary["status"].value_counts().to_dict().items()
+        }
+
     return {
         "run_timestamp_utc": run_time,
         "health_snapshot_path": str(snapshot_path),
@@ -299,6 +404,9 @@ def run_profile_monitor(
         "drift_alerts_csv_path": str(alerts_csv),
         "drift_alerts_html_path": str(alerts_html),
         "drift_alerts_history_path": alert_history_written,
+        "ticker_summary_csv_path": ticker_summary_written_csv,
+        "ticker_summary_html_path": ticker_summary_written_html,
+        "ticker_status_counts": ticker_status_counts,
         "symbols_in_snapshot": int(len(snapshot)),
         "history_rows": int(len(history)),
         "alerts_count": int(len(alerts)),

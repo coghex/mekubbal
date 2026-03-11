@@ -38,10 +38,11 @@ Primary commands:
 - Config-driven profile runner: `mekubbal-profile-runner --config configs/profile-runner.toml`
 - Config-driven profile matrix: `mekubbal-profile-matrix --config configs/profile-matrix.toml`
 - Profile auto-selection from matrix outputs: `mekubbal-profile-select --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --state logs/profile_matrix/reports/profile_selection_state.json --base-profile base --candidate-profile candidate --max-candidate-rank 1 --require-candidate-significant`
-- Standalone profile monitoring pass: `mekubbal-profile-monitor --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --selection-state logs/profile_matrix/reports/profile_selection_state.json`
+- Standalone profile monitoring pass: `mekubbal-profile-monitor --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --selection-state logs/profile_matrix/reports/profile_selection_state.json --ticker-summary-csv logs/profile_matrix/reports/ticker_health_summary.csv --ticker-summary-html logs/profile_matrix/reports/ticker_health_summary.html`
 - Profile rollback on persistent alerts: `mekubbal-profile-rollback --selection-state logs/profile_matrix/reports/profile_selection_state.json --health-history logs/profile_matrix/reports/active_profile_health_history.csv --min-consecutive-alert-runs 2`
 - Profile threshold sweep: `mekubbal-profile-threshold-sweep --profile-symbol-summary logs/profile_matrix/reports/profile_symbol_summary.csv --health-history logs/profile_matrix/reports/active_profile_health_history.csv --selection-state logs/profile_matrix/reports/profile_selection_state.json`
 - Scheduled profile matrix + drift alerts: `mekubbal-profile-schedule --config configs/profile-schedule.toml`
+- Daily schedule profile run (GitHub Actions config): `mekubbal-profile-schedule --config configs/profile-schedule-daily.toml`
 - Model selection rule: `mekubbal-select --report logs/walkforward.csv --state models/current_model.json --lookback 3 --min-gap 0.0`
 - Regime-aware selection gate example: `mekubbal-select --report logs/walkforward.csv --state models/current_model.json --lookback 3 --min-gap 0.0 --min-turbulent-steps 100 --min-turbulent-win-rate 0.5 --min-turbulent-equity-factor 1.0 --max-turbulent-drawdown 0.15`
 - Config-driven initial loop: `mekubbal-loop --config configs/initial-loop.toml`

@@ -16,6 +16,8 @@ def test_run_profile_monitor_builds_history_and_alerts(tmp_path):
     alerts_csv = tmp_path / "profile_drift_alerts.csv"
     alerts_html = tmp_path / "profile_drift_alerts.html"
     alerts_history = tmp_path / "profile_drift_alerts_history.csv"
+    ticker_summary_csv = tmp_path / "ticker_health_summary.csv"
+    ticker_summary_html = tmp_path / "ticker_health_summary.html"
 
     pd.DataFrame(
         [
@@ -43,6 +45,8 @@ def test_run_profile_monitor_builds_history_and_alerts(tmp_path):
         drift_alerts_csv_path=alerts_csv,
         drift_alerts_html_path=alerts_html,
         drift_alerts_history_path=alerts_history,
+        ticker_summary_csv_path=ticker_summary_csv,
+        ticker_summary_html_path=ticker_summary_html,
         lookback_runs=1,
         max_gap_drop=0.01,
         max_rank_worsening=0.5,
@@ -53,6 +57,8 @@ def test_run_profile_monitor_builds_history_and_alerts(tmp_path):
     assert first["alerts_history_count"] == 0
     assert Path(first["health_history_path"]).exists()
     assert Path(first["drift_alerts_history_path"]).exists()
+    assert Path(first["ticker_summary_csv_path"]).exists()
+    assert Path(first["ticker_summary_html_path"]).exists()
 
     pd.DataFrame(
         [
@@ -71,6 +77,8 @@ def test_run_profile_monitor_builds_history_and_alerts(tmp_path):
         drift_alerts_csv_path=alerts_csv,
         drift_alerts_html_path=alerts_html,
         drift_alerts_history_path=alerts_history,
+        ticker_summary_csv_path=ticker_summary_csv,
+        ticker_summary_html_path=ticker_summary_html,
         lookback_runs=1,
         max_gap_drop=0.01,
         max_rank_worsening=0.5,
@@ -82,3 +90,6 @@ def test_run_profile_monitor_builds_history_and_alerts(tmp_path):
     alerts = pd.read_csv(alerts_csv)
     assert "AAPL" in set(alerts["symbol"])
     assert alerts["reasons"].str.contains("gap_drop_exceeded|active_below_base_threshold").any()
+    ticker_summary = pd.read_csv(ticker_summary_csv)
+    assert set(["symbol", "status", "recommended_action", "summary"]).issubset(ticker_summary.columns)
+    assert "AAPL" in set(ticker_summary["symbol"])

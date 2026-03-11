@@ -24,6 +24,8 @@ health_history_path = "reports/active_profile_health_history.csv"
 drift_alerts_csv_path = "reports/profile_drift_alerts.csv"
 drift_alerts_html_path = "reports/profile_drift_alerts.html"
 drift_alerts_history_path = "reports/profile_drift_alerts_history.csv"
+ticker_summary_csv_path = "reports/ticker_health_summary.csv"
+ticker_summary_html_path = "reports/ticker_health_summary.html"
 summary_json_path = "reports/profile_schedule_summary.json"
 
 [monitor]
@@ -70,6 +72,8 @@ min_active_minus_base_gap = -0.01
     assert Path(summary["monitor_summary"]["health_snapshot_path"]).exists()
     assert Path(summary["monitor_summary"]["drift_alerts_csv_path"]).exists()
     assert Path(summary["monitor_summary"]["drift_alerts_history_path"]).exists()
+    assert Path(summary["monitor_summary"]["ticker_summary_csv_path"]).exists()
+    assert Path(summary["monitor_summary"]["ticker_summary_html_path"]).exists()
     loaded = json.loads(Path(summary["summary_json_path"]).read_text(encoding="utf-8"))
     assert "matrix_summary" in loaded
     assert "monitor_summary" in loaded
@@ -91,6 +95,8 @@ health_history_path = "reports/active_profile_health_history.csv"
 drift_alerts_csv_path = "reports/profile_drift_alerts.csv"
 drift_alerts_html_path = "reports/profile_drift_alerts.html"
 drift_alerts_history_path = "reports/profile_drift_alerts_history.csv"
+ticker_summary_csv_path = "reports/ticker_health_summary.csv"
+ticker_summary_html_path = "reports/ticker_health_summary.html"
 summary_json_path = "reports/profile_schedule_summary.json"
 
 [monitor]

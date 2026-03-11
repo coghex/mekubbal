@@ -1,0 +1,26 @@
+[meta]
+extends = "research-control.toml"
+config_version = 3
+profile = "daily-base"
+
+[policy]
+timesteps = 300
+risk_penalty = 0.00025
+switch_penalty = 0.00012
+
+[walkforward]
+train_window = 756
+test_window = 126
+step_window = 126
+
+[ablation]
+enabled = false
+
+[sweep]
+enabled = false
+
+[selection]
+enabled = false
+
+[logging]
+enabled = false

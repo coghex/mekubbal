@@ -1,0 +1,30 @@
+[runner]
+output_root = "../logs/profile_runner_daily"
+profile_summary_path = "reports/profile_summary.csv"
+pairwise_csv_path = "reports/pairwise_significance.csv"
+pairwise_html_path = "reports/pairwise_significance.html"
+dashboard_path = "reports/profile_workspace.html"
+dashboard_title = "Daily Profile Workspace"
+build_dashboard = true
+
+[data]
+path = "../data/aapl.csv"
+refresh = false
+symbol = "AAPL"
+start = ""
+end = ""
+
+[comparison]
+confidence_level = 0.95
+bootstrap_samples = 500
+permutation_samples = 2000
+seed = 7
+title = "Daily Profile Pairwise Significance"
+
+[[profiles]]
+name = "base"
+config = "research-control.daily-base.toml"
+
+[[profiles]]
+name = "candidate"
+config = "research-control.daily-candidate.toml"

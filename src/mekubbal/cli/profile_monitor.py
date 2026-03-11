@@ -43,6 +43,14 @@ def main() -> None:
         "--drift-alerts-history",
         help="Optional CSV path for full drift alert history across runs",
     )
+    parser.add_argument(
+        "--ticker-summary-csv",
+        help="Optional CSV path for user-friendly ticker health summary",
+    )
+    parser.add_argument(
+        "--ticker-summary-html",
+        help="Optional HTML path for user-friendly ticker health summary",
+    )
     parser.add_argument("--lookback-runs", type=int, default=3, help="Prior runs to compare against")
     parser.add_argument(
         "--max-gap-drop",
@@ -71,6 +79,8 @@ def main() -> None:
         drift_alerts_csv_path=args.drift_alerts_csv,
         drift_alerts_html_path=args.drift_alerts_html,
         drift_alerts_history_path=args.drift_alerts_history,
+        ticker_summary_csv_path=args.ticker_summary_csv,
+        ticker_summary_html_path=args.ticker_summary_html,
         lookback_runs=args.lookback_runs,
         max_gap_drop=args.max_gap_drop,
         max_rank_worsening=args.max_rank_worsening,

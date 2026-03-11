@@ -1,5 +1,5 @@
 [schedule]
-matrix_config = "configs/profile-matrix.toml"
+matrix_config = "profile-matrix-daily.toml"
 symbols = []
 health_snapshot_path = "reports/active_profile_health.csv"
 health_history_path = "reports/active_profile_health_history.csv"
@@ -17,7 +17,7 @@ max_rank_worsening = 0.75
 min_active_minus_base_gap = -0.01
 
 [rollback]
-enabled = false
+enabled = true
 rollback_state_path = "reports/profile_rollback_state.json"
 min_consecutive_alert_runs = 2
 rollback_profile = "base"
