@@ -1,0 +1,2 @@
+profile_a,profile_b,paired_symbol_count,mean_gap_diff_a_minus_b,diff_ci_low,diff_ci_high,diff_ci_width,p_value_two_sided,p_value_profile_a_better,p_value_profile_b_better,profile_a_better_significant,profile_b_better_significant
+base,candidate,3,0.009107852590164259,0.0027616580346614406,0.018147363684983153,0.015385705650321713,0.25,0.125,1.0,False,False

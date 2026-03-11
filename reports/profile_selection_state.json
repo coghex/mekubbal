@@ -1,0 +1,84 @@
+{
+  "active_profiles": {
+    "AAPL": "base",
+    "MSFT": "base",
+    "NVDA": "base"
+  },
+  "promotion_rule": {
+    "base_profile": "base",
+    "candidate_profile": "candidate",
+    "fallback_profile": "base",
+    "forbid_base_significant_better": true,
+    "max_candidate_rank": 1,
+    "min_candidate_gap_vs_base": 0.0,
+    "prefer_previous_active": true,
+    "require_candidate_significant": false
+  },
+  "source_profile_symbol_summary_path": "/Users/vincentcoghlan/work/mekubbal/reports/profile_symbol_summary.csv",
+  "symbols": [
+    {
+      "active_profile": "base",
+      "base_better_significant": false,
+      "base_gap": -0.3383218691019378,
+      "base_profile": "base",
+      "base_rank": 1,
+      "candidate_better_significant": false,
+      "candidate_gap": -0.344736405152786,
+      "candidate_minus_base_gap": -0.006414536050848185,
+      "candidate_profile": "candidate",
+      "candidate_rank": 2,
+      "pairwise_csv_path": "/Users/vincentcoghlan/work/mekubbal/reports/pairwise_significance.csv",
+      "previous_active_profile": null,
+      "promoted": false,
+      "reasons": [
+        "candidate_rank_too_low",
+        "candidate_gap_delta_below_threshold",
+        "using_fallback_profile"
+      ],
+      "symbol": "AAPL"
+    },
+    {
+      "active_profile": "base",
+      "base_better_significant": false,
+      "base_gap": -0.242794665493653,
+      "base_profile": "base",
+      "base_rank": 1,
+      "candidate_better_significant": false,
+      "candidate_gap": -0.2609420291786362,
+      "candidate_minus_base_gap": -0.01814736368498318,
+      "candidate_profile": "candidate",
+      "candidate_rank": 2,
+      "pairwise_csv_path": "/Users/vincentcoghlan/work/mekubbal/reports/pairwise_significance.csv",
+      "previous_active_profile": null,
+      "promoted": false,
+      "reasons": [
+        "candidate_rank_too_low",
+        "candidate_gap_delta_below_threshold",
+        "using_fallback_profile"
+      ],
+      "symbol": "MSFT"
+    },
+    {
+      "active_profile": "base",
+      "base_better_significant": false,
+      "base_gap": -0.6737862715264298,
+      "base_profile": "base",
+      "base_rank": 1,
+      "candidate_better_significant": false,
+      "candidate_gap": -0.6765479295610912,
+      "candidate_minus_base_gap": -0.0027616580346614406,
+      "candidate_profile": "candidate",
+      "candidate_rank": 2,
+      "pairwise_csv_path": "/Users/vincentcoghlan/work/mekubbal/reports/pairwise_significance.csv",
+      "previous_active_profile": null,
+      "promoted": false,
+      "reasons": [
+        "candidate_rank_too_low",
+        "candidate_gap_delta_below_threshold",
+        "using_fallback_profile"
+      ],
+      "symbol": "NVDA"
+    }
+  ],
+  "updated_at_utc": "2026-03-11T16:30:16.594997+00:00"
+}

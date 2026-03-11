@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Mekubbal Unified Workspace</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; color: #222; background: #fafafa; }
+    .layout { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+    .sidebar { border-right: 1px solid #ddd; padding: 14px; background: #fff; overflow-y: auto; }
+    .content { padding: 14px; }
+    h1 { margin: 0 0 10px 0; font-size: 20px; }
+    .subtle { color: #666; font-size: 12px; margin-bottom: 10px; }
+    .controls { display: grid; gap: 8px; margin-bottom: 10px; }
+    .controls input {
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 13px;
+    }
+    .group-title { font-size: 12px; font-weight: 700; color: #555; margin: 10px 0 6px 0; text-transform: uppercase; letter-spacing: 0.03em; }
+    .report-grid { display: grid; gap: 6px; }
+    .report-button {
+      text-align: left;
+      border: 1px solid #d9d9d9;
+      background: #f6f6f6;
+      border-radius: 6px;
+      padding: 6px 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .report-button.active { background: #dfeeff; border-color: #7ea9ff; }
+    .content-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .chip { border: 1px solid #d7d7d7; border-radius: 999px; padding: 3px 8px; font-size: 12px; background: #fff; color: #555; }
+    iframe { width: 100%; height: calc(100vh - 90px); border: 1px solid #ddd; border-radius: 8px; background: #fff; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h1>Mekubbal Unified Workspace</h1>
+      <div class="subtle">Unified workspace for leaderboards and per-ticker reports.</div>
+      <div class="controls">
+        <input id="report-search" placeholder="Filter reports..." oninput="filterReports()" />
+      </div>
+      <div id="leaderboard-section" class="section-group">
+        <div class="group-title">Leaderboards</div>
+        <div id="leaderboard-grid" class="report-grid"><button class='report-button active' data-report-id='leaderboard::Confidence' data-label='Confidence' data-group='Leaderboards' onclick="showReport('leaderboard::Confidence')">Confidence</button><button class='report-button' data-report-id='leaderboard::Consistency' data-label='Consistency' data-group='Leaderboards' onclick="showReport('leaderboard::Consistency')">Consistency</button><button class='report-button' data-report-id='leaderboard::Efficiency' data-label='Efficiency' data-group='Leaderboards' onclick="showReport('leaderboard::Efficiency')">Efficiency</button><button class='report-button' data-report-id='leaderboard::Paired Significance' data-label='Paired Significance' data-group='Leaderboards' onclick="showReport('leaderboard::Paired Significance')">Paired Significance</button><button class='report-button' data-report-id='leaderboard::Return' data-label='Return' data-group='Leaderboards' onclick="showReport('leaderboard::Return')">Return</button><button class='report-button' data-report-id='leaderboard::Risk' data-label='Risk' data-group='Leaderboards' onclick="showReport('leaderboard::Risk')">Risk</button><button class='report-button' data-report-id='leaderboard::Stability' data-label='Stability' data-group='Leaderboards' onclick="showReport('leaderboard::Stability')">Stability</button></div>
+      </div>
+      <div id="ticker-section" class="section-group">
+        <div class="group-title">Tickers</div>
+        <div id="ticker-grid" class="report-grid"><button class='report-button' data-report-id='ticker::AAPL' data-label='AAPL' data-group='Tickers' onclick="showReport('ticker::AAPL')">AAPL</button><button class='report-button' data-report-id='ticker::AMZN' data-label='AMZN' data-group='Tickers' onclick="showReport('ticker::AMZN')">AMZN</button><button class='report-button' data-report-id='ticker::GOOGL' data-label='GOOGL' data-group='Tickers' onclick="showReport('ticker::GOOGL')">GOOGL</button><button class='report-button' data-report-id='ticker::META' data-label='META' data-group='Tickers' onclick="showReport('ticker::META')">META</button><button class='report-button' data-report-id='ticker::MSFT' data-label='MSFT' data-group='Tickers' onclick="showReport('ticker::MSFT')">MSFT</button><button class='report-button' data-report-id='ticker::NVDA' data-label='NVDA' data-group='Tickers' onclick="showReport('ticker::NVDA')">NVDA</button><button class='report-button' data-report-id='ticker::UNH' data-label='UNH' data-group='Tickers' onclick="showReport('ticker::UNH')">UNH</button><button class='report-button' data-report-id='ticker::XOM' data-label='XOM' data-group='Tickers' onclick="showReport('ticker::XOM')">XOM</button></div>
+      </div>
+    </aside>
+    <main class="content">
+      <div class="content-header">
+        <div><strong id="active-report-label"></strong></div>
+        <span id="active-report-group" class="chip"></span>
+      </div>
+      <iframe id="report-frame" title="Dashboard report"></iframe>
+    </main>
+  </div>
+  <script>
+    const reports = [{"group": "Leaderboards", "id": "leaderboard::Confidence", "label": "Confidence", "src": "logs/multi_symbol_sector/reports/confidence_leaderboard.html"}, {"group": "Leaderboards", "id": "leaderboard::Consistency", "label": "Consistency", "src": "logs/multi_symbol_sector/reports/consistency_leaderboard.html"}, {"group": "Leaderboards", "id": "leaderboard::Efficiency", "label": "Efficiency", "src": "logs/multi_symbol_sector/reports/efficiency_leaderboard.html"}, {"group": "Leaderboards", "id": "leaderboard::Paired Significance", "label": "Paired Significance", "src": "logs/multi_symbol_sector/reports/paired_significance_leaderboard.html"}, {"group": "Leaderboards", "id": "leaderboard::Return", "label": "Return", "src": "logs/multi_symbol_sector/reports/return_leaderboard.html"}, {"group": "Leaderboards", "id": "leaderboard::Risk", "label": "Risk", "src": "logs/multi_symbol_sector/reports/risk_leaderboard.html"}, {"group": "Leaderboards", "id": "leaderboard::Stability", "label": "Stability", "src": "logs/multi_symbol_sector/reports/stability_leaderboard.html"}, {"group": "Tickers", "id": "ticker::AAPL", "label": "AAPL", "src": "logs/multi_symbol_sector/reports/aapl.html"}, {"group": "Tickers", "id": "ticker::AMZN", "label": "AMZN", "src": "logs/multi_symbol_sector/reports/amzn.html"}, {"group": "Tickers", "id": "ticker::GOOGL", "label": "GOOGL", "src": "logs/multi_symbol_sector/reports/googl.html"}, {"group": "Tickers", "id": "ticker::META", "label": "META", "src": "logs/multi_symbol_sector/reports/meta.html"}, {"group": "Tickers", "id": "ticker::MSFT", "label": "MSFT", "src": "logs/multi_symbol_sector/reports/msft.html"}, {"group": "Tickers", "id": "ticker::NVDA", "label": "NVDA", "src": "logs/multi_symbol_sector/reports/nvda.html"}, {"group": "Tickers", "id": "ticker::UNH", "label": "UNH", "src": "logs/multi_symbol_sector/reports/unh.html"}, {"group": "Tickers", "id": "ticker::XOM", "label": "XOM", "src": "logs/multi_symbol_sector/reports/xom.html"}];
+    const byId = Object.fromEntries(reports.map((entry) => [entry.id, entry]));
+
+    function setActiveButton(reportId) {
+      document.querySelectorAll('.report-button').forEach((button) => {
+        button.classList.toggle('active', button.dataset.reportId === reportId);
+      });
+    }
+
+    function showReport(reportId) {
+      const entry = byId[reportId];
+      if (!entry) return;
+      const frame = document.getElementById('report-frame');
+      frame.src = entry.src;
+      document.getElementById('active-report-label').textContent = entry.label;
+      document.getElementById('active-report-group').textContent = entry.group;
+      setActiveButton(reportId);
+    }
+
+    function filterReports() {
+      const query = document.getElementById('report-search').value.trim().toLowerCase();
+      document.querySelectorAll('.report-button').forEach((button) => {
+        const label = (button.dataset.label || '').toLowerCase();
+        const matchesText = !query || label.includes(query);
+        button.style.display = matchesText ? '' : 'none';
+      });
+      ['leaderboard-section', 'ticker-section'].forEach((sectionId) => {
+        const section = document.getElementById(sectionId);
+        const visible = Array.from(section.querySelectorAll('.report-button')).some((button) => button.style.display !== 'none');
+        section.style.display = visible ? '' : 'none';
+      });
+    }
+
+    function showTicker(ticker) {
+      showReport(`ticker::${ticker}`);
+    }
+
+    showReport("leaderboard::Confidence");
+  </script>
+</body>
+</html>

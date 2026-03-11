@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Fast Cross-Symbol Profile Pairwise</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #222; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; font-size: 13px; }
+    th { background: #f5f5f5; }
+    .note { border: 1px solid #ddd; border-radius: 8px; padding: 10px; margin-bottom: 12px; background: #fafafa; }
+  </style>
+</head>
+<body>
+  <h1>Fast Cross-Symbol Profile Pairwise</h1>
+  <div class="note">Paired profile significance across symbols (confidence=95%, bootstrap=300, permutations=1000).</div>
+  <table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th>profile_a</th>
+      <th>profile_b</th>
+      <th>paired_symbol_count</th>
+      <th>mean_gap_diff_a_minus_b</th>
+      <th>diff_ci_low</th>
+      <th>diff_ci_high</th>
+      <th>diff_ci_width</th>
+      <th>p_value_two_sided</th>
+      <th>p_value_profile_a_better</th>
+      <th>p_value_profile_b_better</th>
+      <th>profile_a_better_significant</th>
+      <th>profile_b_better_significant</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>base</td>
+      <td>candidate</td>
+      <td>3</td>
+      <td>0.009108</td>
+      <td>0.002762</td>
+      <td>0.018147</td>
+      <td>0.015386</td>
+      <td>0.25</td>
+      <td>0.125</td>
+      <td>1.0</td>
+      <td>False</td>
+      <td>False</td>
+    </tr>
+  </tbody>
+</table>
+</body>
+</html>

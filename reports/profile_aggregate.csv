@@ -1,0 +1,3 @@
+rank,profile,symbols_covered,mean_equity_gap,median_equity_gap,std_equity_gap,mean_rank,median_rank,win_count,win_rate,significant_wins,significant_losses,net_significant_wins
+1,candidate,2,0.03500000000000003,0.03500000000000003,0.007071067811865481,1.0,1.0,2,1.0,0,0,0
+2,base,2,0.0050000000000000044,0.0050000000000000044,0.021213203435596444,2.0,2.0,0,0.0,0,0,0
