@@ -703,13 +703,84 @@ def render_product_dashboard(
         )
 
     dense_links: list[dict[str, str]] = []
+    report_label_to_raw: dict[str, str | Path] = {}
     if global_report_paths:
         for label, raw in global_report_paths.items():
+            label_text = str(label).strip()
+            report_label_to_raw[label_text.lower()] = raw
             normalized = _normalize_path(raw)
             if normalized is None:
                 continue
-            dense_links.append({"label": str(label), "url": normalized})
+            dense_links.append({"label": label_text, "url": normalized})
     dense_links.sort(key=lambda item: item["label"])
+
+    shadow_gate_payload: dict[str, Any] = {
+        "enabled": False,
+        "overall_gate_passed": None,
+        "window_runs": None,
+        "min_match_ratio": None,
+        "failing_symbols": [],
+        "symbols": [],
+        "gate_json_url": _normalize_path(report_label_to_raw.get("shadow gate json", "")),
+        "comparison_url": _normalize_path(report_label_to_raw.get("shadow comparison", "")),
+    }
+    shadow_gate_raw = report_label_to_raw.get("shadow gate json")
+    if shadow_gate_raw is not None:
+        shadow_gate_value = str(shadow_gate_raw).strip()
+        if shadow_gate_value and "://" not in shadow_gate_value:
+            shadow_gate_path = Path(shadow_gate_value).expanduser()
+            if not shadow_gate_path.is_absolute():
+                shadow_gate_path = (Path.cwd() / shadow_gate_path).resolve()
+            else:
+                shadow_gate_path = shadow_gate_path.resolve()
+            if shadow_gate_path.exists():
+                try:
+                    loaded_shadow_gate = json.loads(shadow_gate_path.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    loaded_shadow_gate = None
+                if isinstance(loaded_shadow_gate, dict):
+                    symbol_rows: list[dict[str, Any]] = []
+                    for item in loaded_shadow_gate.get("symbols", []):
+                        if not isinstance(item, dict):
+                            continue
+                        symbol_rows.append(
+                            {
+                                "symbol": str(item.get("symbol", "")).upper(),
+                                "gate_passed": bool(item.get("gate_passed", False)),
+                                "runs_in_window": int(item.get("runs_in_window", 0)),
+                                "window_runs_required": int(item.get("window_runs_required", 0)),
+                                "match_ratio": (
+                                    float(item.get("match_ratio"))
+                                    if item.get("match_ratio") is not None
+                                    else None
+                                ),
+                                "min_match_ratio": (
+                                    float(item.get("min_match_ratio"))
+                                    if item.get("min_match_ratio") is not None
+                                    else None
+                                ),
+                            }
+                        )
+                    shadow_gate_payload = {
+                        "enabled": True,
+                        "overall_gate_passed": bool(loaded_shadow_gate.get("overall_gate_passed", False)),
+                        "window_runs": (
+                            int(loaded_shadow_gate["window_runs"])
+                            if loaded_shadow_gate.get("window_runs") is not None
+                            else None
+                        ),
+                        "min_match_ratio": (
+                            float(loaded_shadow_gate["min_match_ratio"])
+                            if loaded_shadow_gate.get("min_match_ratio") is not None
+                            else None
+                        ),
+                        "failing_symbols": [
+                            str(value) for value in loaded_shadow_gate.get("failing_symbols", [])
+                        ],
+                        "symbols": symbol_rows,
+                        "gate_json_url": _normalize_path(shadow_gate_value),
+                        "comparison_url": _normalize_path(report_label_to_raw.get("shadow comparison", "")),
+                    }
 
     tickers_sorted = sorted(ticker_payload)
     if not tickers_sorted:
@@ -740,8 +811,18 @@ def render_product_dashboard(
     .main {{ padding: 14px; overflow: auto; }}
     .panel {{ display: none; }}
     .panel.active {{ display: block; }}
-    #system-panel {{ height: calc(100vh - 28px); }}
-    #system-svg {{ width: 100%; height: 100%; background: #0b1220; border-radius: 10px; }}
+    #system-panel {{ height: calc(100vh - 28px); display: flex; flex-direction: column; gap: 10px; }}
+    .shadow-panel {{ background: #fff; border: 1px solid #dbe1ea; border-radius: 10px; padding: 10px; }}
+    .shadow-head {{ display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
+    .shadow-status {{ font-size: 13px; font-weight: 700; border-radius: 999px; padding: 4px 10px; }}
+    .shadow-status.pass {{ background: #dcfce7; color: #166534; }}
+    .shadow-status.fail {{ background: #fee2e2; color: #991b1b; }}
+    .shadow-status.inactive {{ background: #e2e8f0; color: #334155; }}
+    .shadow-meta {{ margin-top: 6px; font-size: 13px; color: #475569; }}
+    .shadow-failing {{ margin-top: 4px; font-size: 12px; color: #7c2d12; }}
+    .shadow-table-wrap {{ margin-top: 8px; }}
+    .shadow-table-wrap th, .shadow-table-wrap td {{ font-size: 12px; }}
+    #system-svg {{ width: 100%; flex: 1; min-height: 320px; background: #0b1220; border-radius: 10px; }}
     .ticker-header {{ display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
     .ticker-name {{ font-size: 22px; font-weight: 700; }}
     .chip {{ border: 1px solid #d0d7e2; border-radius: 999px; padding: 4px 10px; background: #fff; font-size: 12px; }}
@@ -775,6 +856,29 @@ def render_product_dashboard(
     </aside>
     <main class="main">
       <section id="system-panel" class="panel active">
+        <div class="shadow-panel">
+          <div class="shadow-head">
+            <div class="label">Shadow gate</div>
+            <div id="shadow-status" class="shadow-status inactive">Inactive</div>
+          </div>
+          <div id="shadow-meta" class="shadow-meta"></div>
+          <div id="shadow-failing" class="shadow-failing"></div>
+          <details id="shadow-details" class="shadow-table-wrap">
+            <summary>Per-symbol shadow agreement</summary>
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Gate</th>
+                  <th>Runs</th>
+                  <th>Match Ratio</th>
+                  <th>Required</th>
+                </tr>
+              </thead>
+              <tbody id="shadow-table-body"></tbody>
+            </table>
+          </details>
+        </div>
         <svg id="system-svg"></svg>
       </section>
       <section id="ticker-panel" class="panel">
@@ -834,6 +938,7 @@ def render_product_dashboard(
     const systemNodes = {json.dumps(nodes, sort_keys=True)};
     const tickerData = {json.dumps(ticker_payload, sort_keys=True)};
     const globalReports = {json.dumps(dense_links, sort_keys=True)};
+    const shadowGate = {json.dumps(shadow_gate_payload, sort_keys=True)};
     const tickerOrder = {json.dumps(tickers_sorted)};
     let currentTicker = tickerOrder[0];
 
@@ -847,6 +952,7 @@ def render_product_dashboard(
       document.getElementById('system-panel').classList.add('active');
       document.getElementById('ticker-panel').classList.remove('active');
       resetNav('nav-system');
+      renderShadowPanel();
       drawSystem();
     }}
 
@@ -913,6 +1019,60 @@ def render_product_dashboard(
       }});
     }}
 
+    function renderShadowPanel() {{
+      const statusEl = document.getElementById('shadow-status');
+      const metaEl = document.getElementById('shadow-meta');
+      const failingEl = document.getElementById('shadow-failing');
+      const detailsEl = document.getElementById('shadow-details');
+      const tableBody = document.getElementById('shadow-table-body');
+      statusEl.classList.remove('pass', 'fail', 'inactive');
+      tableBody.innerHTML = '';
+
+      if (!shadowGate.enabled) {{
+        statusEl.textContent = 'Inactive';
+        statusEl.classList.add('inactive');
+        const fallback = shadowGate.gate_json_url ? 'Shadow gate artifact available but not readable in this view.' : 'Shadow evaluation is not enabled for this run.';
+        metaEl.textContent = fallback;
+        failingEl.textContent = '';
+        detailsEl.style.display = 'none';
+        return;
+      }}
+
+      const passed = shadowGate.overall_gate_passed === true;
+      statusEl.textContent = passed ? 'PASS' : 'FAIL';
+      statusEl.classList.add(passed ? 'pass' : 'fail');
+      const windowRuns = shadowGate.window_runs == null ? 'n/a' : String(shadowGate.window_runs);
+      const minRatio = shadowGate.min_match_ratio == null ? 'n/a' : `${{(shadowGate.min_match_ratio * 100).toFixed(1)}}%`;
+      const links = [];
+      if (shadowGate.comparison_url) links.push(`<a href="${{shadowGate.comparison_url}}" target="_blank" rel="noopener noreferrer">comparison</a>`);
+      if (shadowGate.gate_json_url) links.push(`<a href="${{shadowGate.gate_json_url}}" target="_blank" rel="noopener noreferrer">gate json</a>`);
+      const linkSuffix = links.length ? ` (${{links.join(' · ')}})` : '';
+      metaEl.innerHTML = `Window: ${{windowRuns}} runs · Required agreement: ${{minRatio}}${{linkSuffix}}`;
+
+      const failing = Array.isArray(shadowGate.failing_symbols) ? shadowGate.failing_symbols : [];
+      if (failing.length === 0) {{
+        failingEl.textContent = 'No failing symbols in current shadow window.';
+      }} else {{
+        failingEl.textContent = `Failing symbols: ${{failing.join(', ')}}`;
+      }}
+
+      const rows = Array.isArray(shadowGate.symbols) ? shadowGate.symbols : [];
+      if (rows.length === 0) {{
+        detailsEl.style.display = 'none';
+        return;
+      }}
+      detailsEl.style.display = '';
+      rows.forEach((row) => {{
+        const tr = document.createElement('tr');
+        const gate = row.gate_passed ? 'pass' : 'fail';
+        const ratio = row.match_ratio == null ? 'n/a' : `${{(row.match_ratio * 100).toFixed(1)}}%`;
+        const required = row.min_match_ratio == null ? 'n/a' : `${{(row.min_match_ratio * 100).toFixed(1)}}%`;
+        const runs = `${{row.runs_in_window ?? 'n/a'}}/${{row.window_runs_required ?? 'n/a'}}`;
+        tr.innerHTML = `<td>${{row.symbol || ''}}</td><td>${{gate}}</td><td>${{runs}}</td><td>${{ratio}}</td><td>${{required}}</td>`;
+        tableBody.appendChild(tr);
+      }});
+    }}
+
     function renderTicker(symbol) {{
       const data = tickerData[symbol];
       if (!data) return;
@@ -931,6 +1091,14 @@ def render_product_dashboard(
         `Regime: ${{data.regime || 'n/a'}}`,
         `Ensemble confidence: ${{data.ensemble_confidence == null ? 'n/a' : data.ensemble_confidence.toFixed(3)}}`
       ];
+      if (shadowGate.enabled) {{
+        const row = (shadowGate.symbols || []).find((item) => item.symbol === symbol);
+        if (row) {{
+          const ratio = row.match_ratio == null ? 'n/a' : `${{(row.match_ratio * 100).toFixed(1)}}%`;
+          const required = row.min_match_ratio == null ? 'n/a' : `${{(row.min_match_ratio * 100).toFixed(1)}}%`;
+          ops.push(`Shadow agreement: ${{row.gate_passed ? 'pass' : 'fail'}} (${{ratio}} / required ${{required}})`);
+        }}
+      }}
       document.getElementById('ops-internals').innerHTML = ops.map((line) => `<div>${{line}}</div>`).join('');
 
       const tbody = document.getElementById('profile-table');

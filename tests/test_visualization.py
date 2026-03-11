@@ -249,3 +249,103 @@ def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
     assert "showTicker" in text
     assert "System matrix workspace" in text
     assert "aapl_candidate.html" in text
+
+
+def test_render_product_dashboard_includes_shadow_gate_panel(tmp_path):
+    output = tmp_path / "product_dashboard.html"
+    ticker_summary = tmp_path / "ticker_health_summary.csv"
+    health_history = tmp_path / "active_profile_health_history.csv"
+    symbol_summary = tmp_path / "profile_symbol_summary.csv"
+    shadow_comparison = tmp_path / "profile_shadow_comparison.html"
+    shadow_gate = tmp_path / "profile_shadow_gate.json"
+    shadow_comparison.write_text("<html>shadow comparison</html>", encoding="utf-8")
+    shadow_gate.write_text(
+        json.dumps(
+            {
+                "run_timestamp_utc": "2026-01-03T00:00:00+00:00",
+                "window_runs": 5,
+                "min_match_ratio": 1.0,
+                "overall_gate_passed": False,
+                "failing_symbols": ["MSFT:match_ratio(0.800<1.000)"],
+                "symbols": [
+                    {
+                        "symbol": "AAPL",
+                        "window_runs_required": 5,
+                        "runs_in_window": 5,
+                        "match_ratio": 1.0,
+                        "min_match_ratio": 1.0,
+                        "gate_passed": True,
+                    },
+                    {
+                        "symbol": "MSFT",
+                        "window_runs_required": 5,
+                        "runs_in_window": 5,
+                        "match_ratio": 0.8,
+                        "min_match_ratio": 1.0,
+                        "gate_passed": False,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    pd.DataFrame(
+        [
+            {
+                "symbol": "AAPL",
+                "status": "Healthy",
+                "selected_profile": "base",
+                "active_profile": "base",
+                "active_profile_source": "selection_state",
+                "ensemble_regime": "stable",
+                "ensemble_confidence": 0.8,
+                "active_rank": 1,
+                "active_vs_buy_and_hold": "+1.20%",
+                "active_vs_base": "+0.00%",
+                "recommended_action": "Keep current active profile.",
+                "summary": "base vs buy-and-hold +1.20%; vs base +0.00%.",
+            }
+        ]
+    ).to_csv(ticker_summary, index=False)
+    pd.DataFrame(
+        [
+            {
+                "run_timestamp_utc": "2026-01-03T00:00:00+00:00",
+                "symbol": "AAPL",
+                "active_gap": 0.012,
+                "selected_gap": 0.012,
+                "active_rank": 1,
+            }
+        ]
+    ).to_csv(health_history, index=False)
+    pd.DataFrame(
+        [
+            {
+                "symbol": "AAPL",
+                "profile": "base",
+                "symbol_rank": 1,
+                "avg_equity_gap": 0.012,
+                "visual_report_path": str(tmp_path / "aapl_base.html"),
+                "symbol_pairwise_html_path": str(tmp_path / "aapl_pairwise.html"),
+            }
+        ]
+    ).to_csv(symbol_summary, index=False)
+    (tmp_path / "aapl_base.html").write_text("<html>aapl base</html>", encoding="utf-8")
+    (tmp_path / "aapl_pairwise.html").write_text("<html>aapl pairwise</html>", encoding="utf-8")
+
+    result = render_product_dashboard(
+        output,
+        ticker_summary_csv_path=ticker_summary,
+        health_history_path=health_history,
+        symbol_summary_path=symbol_summary,
+        global_report_paths={
+            "Shadow comparison": shadow_comparison,
+            "Shadow gate JSON": shadow_gate,
+        },
+    )
+    assert result.exists()
+    text = result.read_text(encoding="utf-8")
+    assert "Per-symbol shadow agreement" in text
+    assert "shadow-status" in text
+    assert "MSFT:match_ratio(0.800<1.000)" in text
