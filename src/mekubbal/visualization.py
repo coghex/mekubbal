@@ -724,6 +724,16 @@ def render_product_dashboard(
         "gate_json_url": _normalize_path(report_label_to_raw.get("shadow gate json", "")),
         "comparison_url": _normalize_path(report_label_to_raw.get("shadow comparison", "")),
     }
+    shadow_suggestion_payload: dict[str, Any] = {
+        "enabled": False,
+        "accepted": False,
+        "recommended_window_runs": None,
+        "recommended_min_match_ratio": None,
+        "reasons": [],
+        "suggestion_json_url": _normalize_path(report_label_to_raw.get("shadow suggestion json", "")),
+        "suggestion_html_url": _normalize_path(report_label_to_raw.get("shadow suggestions", "")),
+        "recommendation_metrics": {},
+    }
     shadow_gate_raw = report_label_to_raw.get("shadow gate json")
     if shadow_gate_raw is not None:
         shadow_gate_value = str(shadow_gate_raw).strip()
@@ -781,6 +791,46 @@ def render_product_dashboard(
                         "gate_json_url": _normalize_path(shadow_gate_value),
                         "comparison_url": _normalize_path(report_label_to_raw.get("shadow comparison", "")),
                     }
+    shadow_suggestion_raw = report_label_to_raw.get("shadow suggestion json")
+    if shadow_suggestion_raw is not None:
+        shadow_suggestion_value = str(shadow_suggestion_raw).strip()
+        if shadow_suggestion_value and "://" not in shadow_suggestion_value:
+            shadow_suggestion_path = Path(shadow_suggestion_value).expanduser()
+            if not shadow_suggestion_path.is_absolute():
+                shadow_suggestion_path = (Path.cwd() / shadow_suggestion_path).resolve()
+            else:
+                shadow_suggestion_path = shadow_suggestion_path.resolve()
+            if shadow_suggestion_path.exists():
+                try:
+                    loaded_shadow_suggestion = json.loads(
+                        shadow_suggestion_path.read_text(encoding="utf-8")
+                    )
+                except (json.JSONDecodeError, OSError):
+                    loaded_shadow_suggestion = None
+                if isinstance(loaded_shadow_suggestion, dict):
+                    shadow_suggestion_payload = {
+                        "enabled": True,
+                        "accepted": bool(loaded_shadow_suggestion.get("accepted", False)),
+                        "recommended_window_runs": loaded_shadow_suggestion.get("recommended_window_runs"),
+                        "recommended_min_match_ratio": loaded_shadow_suggestion.get(
+                            "recommended_min_match_ratio"
+                        ),
+                        "reasons": [
+                            str(value)
+                            for value in loaded_shadow_suggestion.get("reasons", [])
+                        ],
+                        "suggestion_json_url": _normalize_path(shadow_suggestion_value),
+                        "suggestion_html_url": _normalize_path(
+                            report_label_to_raw.get("shadow suggestions", "")
+                        ),
+                        "recommendation_metrics": (
+                            loaded_shadow_suggestion.get("recommendation_metrics")
+                            if isinstance(
+                                loaded_shadow_suggestion.get("recommendation_metrics"), dict
+                            )
+                            else {}
+                        ),
+                    }
 
     tickers_sorted = sorted(ticker_payload)
     if not tickers_sorted:
@@ -820,6 +870,7 @@ def render_product_dashboard(
     .shadow-status.inactive {{ background: #e2e8f0; color: #334155; }}
     .shadow-meta {{ margin-top: 6px; font-size: 13px; color: #475569; }}
     .shadow-failing {{ margin-top: 4px; font-size: 12px; color: #7c2d12; }}
+    .shadow-suggestion {{ margin-top: 6px; font-size: 12px; color: #334155; }}
     .shadow-table-wrap {{ margin-top: 8px; }}
     .shadow-table-wrap th, .shadow-table-wrap td {{ font-size: 12px; }}
     #system-svg {{ width: 100%; flex: 1; min-height: 320px; background: #0b1220; border-radius: 10px; }}
@@ -863,6 +914,7 @@ def render_product_dashboard(
           </div>
           <div id="shadow-meta" class="shadow-meta"></div>
           <div id="shadow-failing" class="shadow-failing"></div>
+          <div id="shadow-suggestion" class="shadow-suggestion"></div>
           <details id="shadow-details" class="shadow-table-wrap">
             <summary>Per-symbol shadow agreement</summary>
             <table>
@@ -939,6 +991,7 @@ def render_product_dashboard(
     const tickerData = {json.dumps(ticker_payload, sort_keys=True)};
     const globalReports = {json.dumps(dense_links, sort_keys=True)};
     const shadowGate = {json.dumps(shadow_gate_payload, sort_keys=True)};
+    const shadowSuggestion = {json.dumps(shadow_suggestion_payload, sort_keys=True)};
     const tickerOrder = {json.dumps(tickers_sorted)};
     let currentTicker = tickerOrder[0];
 
@@ -1023,6 +1076,7 @@ def render_product_dashboard(
       const statusEl = document.getElementById('shadow-status');
       const metaEl = document.getElementById('shadow-meta');
       const failingEl = document.getElementById('shadow-failing');
+      const suggestionEl = document.getElementById('shadow-suggestion');
       const detailsEl = document.getElementById('shadow-details');
       const tableBody = document.getElementById('shadow-table-body');
       statusEl.classList.remove('pass', 'fail', 'inactive');
@@ -1034,6 +1088,14 @@ def render_product_dashboard(
         const fallback = shadowGate.gate_json_url ? 'Shadow gate artifact available but not readable in this view.' : 'Shadow evaluation is not enabled for this run.';
         metaEl.textContent = fallback;
         failingEl.textContent = '';
+        if (shadowSuggestion.enabled && shadowSuggestion.accepted) {{
+          const ratio = shadowSuggestion.recommended_min_match_ratio == null
+            ? 'n/a'
+            : `${{(Number(shadowSuggestion.recommended_min_match_ratio) * 100).toFixed(1)}}%`;
+          suggestionEl.innerHTML = `Suggested config: window_runs=${{shadowSuggestion.recommended_window_runs ?? 'n/a'}}, min_match_ratio=${{ratio}}.`;
+        }} else {{
+          suggestionEl.textContent = '';
+        }}
         detailsEl.style.display = 'none';
         return;
       }}
@@ -1054,6 +1116,27 @@ def render_product_dashboard(
         failingEl.textContent = 'No failing symbols in current shadow window.';
       }} else {{
         failingEl.textContent = `Failing symbols: ${{failing.join(', ')}}`;
+      }}
+      if (!shadowSuggestion.enabled) {{
+        suggestionEl.textContent = '';
+      }} else if (shadowSuggestion.accepted) {{
+        const ratio = shadowSuggestion.recommended_min_match_ratio == null
+          ? 'n/a'
+          : `${{(Number(shadowSuggestion.recommended_min_match_ratio) * 100).toFixed(1)}}%`;
+        const bits = [
+          `Suggested config: window_runs=${{shadowSuggestion.recommended_window_runs ?? 'n/a'}}`,
+          `min_match_ratio=${{ratio}}`
+        ];
+        const links = [];
+        if (shadowSuggestion.suggestion_html_url) links.push(`<a href="${{shadowSuggestion.suggestion_html_url}}" target="_blank" rel="noopener noreferrer">suggestion report</a>`);
+        if (shadowSuggestion.suggestion_json_url) links.push(`<a href="${{shadowSuggestion.suggestion_json_url}}" target="_blank" rel="noopener noreferrer">suggestion json</a>`);
+        const suffix = links.length ? ` (${{links.join(' · ')}})` : '';
+        suggestionEl.innerHTML = bits.join(' · ') + suffix;
+      }} else {{
+        const reasons = Array.isArray(shadowSuggestion.reasons) && shadowSuggestion.reasons.length
+          ? shadowSuggestion.reasons.join('; ')
+          : 'insufficient history';
+        suggestionEl.textContent = `Auto-suggestion pending: ${{reasons}}`;
       }}
 
       const rows = Array.isArray(shadowGate.symbols) ? shadowGate.symbols : [];
@@ -1098,6 +1181,12 @@ def render_product_dashboard(
           const required = row.min_match_ratio == null ? 'n/a' : `${{(row.min_match_ratio * 100).toFixed(1)}}%`;
           ops.push(`Shadow agreement: ${{row.gate_passed ? 'pass' : 'fail'}} (${{ratio}} / required ${{required}})`);
         }}
+      }}
+      if (shadowSuggestion.enabled && shadowSuggestion.accepted) {{
+        const ratio = shadowSuggestion.recommended_min_match_ratio == null
+          ? 'n/a'
+          : `${{(Number(shadowSuggestion.recommended_min_match_ratio) * 100).toFixed(1)}}%`;
+        ops.push(`Suggested shadow settings: window_runs=${{shadowSuggestion.recommended_window_runs ?? 'n/a'}}, min_match_ratio=${{ratio}}`);
       }}
       document.getElementById('ops-internals').innerHTML = ops.map((line) => `<div>${{line}}</div>`).join('');
 

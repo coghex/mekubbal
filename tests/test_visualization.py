@@ -258,6 +258,7 @@ def test_render_product_dashboard_includes_shadow_gate_panel(tmp_path):
     symbol_summary = tmp_path / "profile_symbol_summary.csv"
     shadow_comparison = tmp_path / "profile_shadow_comparison.html"
     shadow_gate = tmp_path / "profile_shadow_gate.json"
+    shadow_suggestion = tmp_path / "profile_shadow_suggestions.json"
     shadow_comparison.write_text("<html>shadow comparison</html>", encoding="utf-8")
     shadow_gate.write_text(
         json.dumps(
@@ -285,6 +286,24 @@ def test_render_product_dashboard_includes_shadow_gate_panel(tmp_path):
                         "gate_passed": False,
                     },
                 ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    shadow_suggestion.write_text(
+        json.dumps(
+            {
+                "accepted": True,
+                "recommended_window_runs": 5,
+                "recommended_min_match_ratio": 0.85,
+                "recommendation_metrics": {
+                    "samples": 42,
+                    "pass_rate": 0.64,
+                    "pass_precision_next_run_match": 0.93,
+                    "fail_precision_next_run_mismatch": 0.62,
+                    "score": 0.81,
+                },
+                "reasons": [],
             }
         ),
         encoding="utf-8",
@@ -342,6 +361,8 @@ def test_render_product_dashboard_includes_shadow_gate_panel(tmp_path):
         global_report_paths={
             "Shadow comparison": shadow_comparison,
             "Shadow gate JSON": shadow_gate,
+            "Shadow suggestions": tmp_path / "profile_shadow_suggestions.html",
+            "Shadow suggestion JSON": shadow_suggestion,
         },
     )
     assert result.exists()
@@ -349,3 +370,4 @@ def test_render_product_dashboard_includes_shadow_gate_panel(tmp_path):
     assert "Per-symbol shadow agreement" in text
     assert "shadow-status" in text
     assert "MSFT:match_ratio(0.800<1.000)" in text
+    assert "Suggested config: window_runs=" in text

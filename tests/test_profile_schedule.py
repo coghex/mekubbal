@@ -573,6 +573,12 @@ effective_selection_state_path = "reports/profile_selection_state_shadow_ensembl
     assert monitor_calls[1].endswith("reports/shadow_selection_state.json")
     assert summary["shadow_summary"] is not None
     assert summary["shadow_summary"]["comparison_summary"]["overall_gate_passed"] is True
+    assert Path(
+        summary["shadow_summary"]["suggestion_summary"]["suggestion_json_path"]
+    ).exists()
+    assert Path(
+        summary["shadow_summary"]["suggestion_summary"]["suggestion_html_path"]
+    ).exists()
     assert summary["shadow_summary"]["promotion_applied"] is True
     production_loaded = json.loads(production_state.read_text(encoding="utf-8"))
     assert production_loaded["shadow_marker"] == "candidate-ready"

@@ -82,6 +82,9 @@ def _default_profile_schedule_config() -> dict[str, Any]:
             "comparison_html_path": "reports/profile_shadow_comparison.html",
             "comparison_history_path": "reports/profile_shadow_comparison_history.csv",
             "gate_json_path": "reports/profile_shadow_gate.json",
+            "suggestion_json_path": "reports/profile_shadow_suggestions.json",
+            "suggestion_html_path": "reports/profile_shadow_suggestions.html",
+            "suggestion_min_history_runs": 8,
             "health_snapshot_path": "reports/shadow_active_profile_health.csv",
             "health_history_path": "reports/shadow_active_profile_health_history.csv",
             "drift_alerts_csv_path": "reports/shadow_profile_drift_alerts.csv",
@@ -189,6 +192,8 @@ def _validate_profile_schedule_config(config: dict[str, Any], *, config_dir: Pat
     min_match_ratio = float(shadow["min_match_ratio"])
     if min_match_ratio < 0 or min_match_ratio > 1:
         raise ValueError("shadow.min_match_ratio must be in [0, 1].")
+    if int(shadow["suggestion_min_history_runs"]) < 3:
+        raise ValueError("shadow.suggestion_min_history_runs must be >= 3.")
     if int(schedule["ops_digest_lookback_runs"]) < 1:
         raise ValueError("schedule.ops_digest_lookback_runs must be >= 1.")
 
@@ -364,6 +369,173 @@ def _build_shadow_comparison(
         "gate_json_path": str(gate_json_path),
         "overall_gate_passed": overall_gate_passed,
         "failing_symbols": failing_symbols,
+    }
+
+
+def _suggest_shadow_thresholds(
+    *,
+    comparison_history_path: Path,
+    suggestion_json_path: Path,
+    suggestion_html_path: Path,
+    min_history_runs: int,
+) -> dict[str, Any]:
+    required = {"run_timestamp_utc", "symbol", "active_profile_match"}
+    if not comparison_history_path.exists():
+        payload = {
+            "accepted": False,
+            "reasons": [f"history_missing:{comparison_history_path}"],
+            "recommended_window_runs": None,
+            "recommended_min_match_ratio": None,
+            "grid_rows": 0,
+            "symbol_run_counts": {},
+        }
+        suggestion_json_path.parent.mkdir(parents=True, exist_ok=True)
+        suggestion_json_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        suggestion_html_path.parent.mkdir(parents=True, exist_ok=True)
+        suggestion_html_path.write_text(
+            _html_table("Shadow Threshold Suggestions", "No comparison history available.", pd.DataFrame()),
+            encoding="utf-8",
+        )
+        return {
+            "suggestion_json_path": str(suggestion_json_path),
+            "suggestion_html_path": str(suggestion_html_path),
+            "accepted": False,
+            "reasons": payload["reasons"],
+        }
+
+    history = pd.read_csv(comparison_history_path)
+    missing = sorted(required - set(history.columns))
+    if missing:
+        raise ValueError(f"Shadow comparison history missing required columns: {missing}")
+
+    frame = history.copy()
+    frame["run_timestamp_utc"] = frame["run_timestamp_utc"].astype(str)
+    frame["symbol"] = frame["symbol"].astype(str).str.upper()
+    frame["active_profile_match"] = (
+        frame["active_profile_match"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .map({"true": 1, "false": 0, "1": 1, "0": 0})
+    )
+    frame = frame.dropna(subset=["active_profile_match"])
+    if frame.empty:
+        raise ValueError("Shadow comparison history has no valid active_profile_match rows.")
+    frame["active_profile_match"] = frame["active_profile_match"].astype(int)
+
+    run_counts = {
+        str(symbol): int(count)
+        for symbol, count in frame.groupby("symbol").size().to_dict().items()
+    }
+    min_symbol_runs = min(run_counts.values()) if run_counts else 0
+    reasons: list[str] = []
+    if min_symbol_runs < int(min_history_runs):
+        reasons.append(f"insufficient_history_runs_per_symbol:{min_symbol_runs}<{int(min_history_runs)}")
+
+    max_window = max(2, min(10, min_symbol_runs - 1))
+    windows = list(range(2, max_window + 1))
+    thresholds = [round(value, 2) for value in [0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0]]
+    rows: list[dict[str, Any]] = []
+    for window in windows:
+        for threshold in thresholds:
+            total = 0
+            pass_predictions = 0
+            pass_correct = 0
+            fail_predictions = 0
+            fail_correct = 0
+            for _, group in frame.groupby("symbol"):
+                ordered = group.sort_values("run_timestamp_utc").reset_index(drop=True)
+                matches = ordered["active_profile_match"].tolist()
+                if len(matches) <= window:
+                    continue
+                for idx in range(window - 1, len(matches) - 1):
+                    ratio = float(sum(matches[idx - window + 1 : idx + 1])) / float(window)
+                    predict_pass = ratio >= float(threshold)
+                    next_match = int(matches[idx + 1])
+                    total += 1
+                    if predict_pass:
+                        pass_predictions += 1
+                        if next_match == 1:
+                            pass_correct += 1
+                    else:
+                        fail_predictions += 1
+                        if next_match == 0:
+                            fail_correct += 1
+            if total == 0:
+                continue
+            pass_rate = float(pass_predictions) / float(total)
+            pass_precision = float(pass_correct) / float(pass_predictions) if pass_predictions > 0 else 0.0
+            fail_precision = float(fail_correct) / float(fail_predictions) if fail_predictions > 0 else 0.0
+            score = (
+                0.65 * pass_precision
+                + 0.35 * fail_precision
+                - 0.1 * abs(pass_rate - 0.5)
+                + 0.02 * min(total, 200) / 200.0
+            )
+            rows.append(
+                {
+                    "window_runs": int(window),
+                    "min_match_ratio": float(threshold),
+                    "samples": int(total),
+                    "pass_rate": pass_rate,
+                    "pass_precision_next_run_match": pass_precision,
+                    "fail_precision_next_run_mismatch": fail_precision,
+                    "score": score,
+                }
+            )
+
+    ranking = pd.DataFrame(rows)
+    if ranking.empty:
+        reasons.append("insufficient_comparison_samples_for_grid")
+    else:
+        ranking = ranking.sort_values(
+            ["score", "pass_precision_next_run_match", "samples", "window_runs", "min_match_ratio"],
+            ascending=[False, False, False, False, False],
+        ).reset_index(drop=True)
+        ranking.insert(0, "rank", range(1, len(ranking) + 1))
+
+    accepted = (not reasons) and (not ranking.empty)
+    best = ranking.iloc[0].to_dict() if accepted else {}
+    payload = {
+        "accepted": bool(accepted),
+        "reasons": reasons,
+        "symbol_run_counts": run_counts,
+        "min_symbol_runs": int(min_symbol_runs),
+        "minimum_required_history_runs": int(min_history_runs),
+        "recommended_window_runs": int(best["window_runs"]) if accepted else None,
+        "recommended_min_match_ratio": float(best["min_match_ratio"]) if accepted else None,
+        "recommendation_metrics": (
+            {
+                "samples": int(best["samples"]),
+                "pass_rate": float(best["pass_rate"]),
+                "pass_precision_next_run_match": float(best["pass_precision_next_run_match"]),
+                "fail_precision_next_run_mismatch": float(best["fail_precision_next_run_mismatch"]),
+                "score": float(best["score"]),
+            }
+            if accepted
+            else {}
+        ),
+        "grid_rows": int(len(ranking)),
+    }
+    suggestion_json_path.parent.mkdir(parents=True, exist_ok=True)
+    suggestion_json_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    suggestion_html_path.parent.mkdir(parents=True, exist_ok=True)
+    top_rows = ranking.head(20) if not ranking.empty else pd.DataFrame()
+    note = (
+        "Auto-suggested shadow gate thresholds ranked by next-run prediction quality from historical "
+        "shadow-vs-production agreement."
+    )
+    suggestion_html_path.write_text(
+        _html_table("Shadow Threshold Suggestions", note, top_rows),
+        encoding="utf-8",
+    )
+    return {
+        "suggestion_json_path": str(suggestion_json_path),
+        "suggestion_html_path": str(suggestion_html_path),
+        "accepted": bool(accepted),
+        "reasons": reasons,
+        "recommended_window_runs": payload["recommended_window_runs"],
+        "recommended_min_match_ratio": payload["recommended_min_match_ratio"],
     }
 
 
@@ -618,6 +790,12 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
             window_runs=int(shadow_cfg["window_runs"]),
             min_match_ratio=float(shadow_cfg["min_match_ratio"]),
         )
+        shadow_suggestion_summary = _suggest_shadow_thresholds(
+            comparison_history_path=Path(str(shadow_comparison_summary["comparison_history_path"])),
+            suggestion_json_path=matrix_output_root / str(shadow_cfg["suggestion_json_path"]),
+            suggestion_html_path=matrix_output_root / str(shadow_cfg["suggestion_html_path"]),
+            min_history_runs=int(shadow_cfg["suggestion_min_history_runs"]),
+        )
         shadow_promotion_applied = False
         if bool(shadow_cfg["apply_promotion_after_shadow"]) and bool(
             shadow_comparison_summary["overall_gate_passed"]
@@ -648,6 +826,7 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
             "shadow_state_path": str(shadow_selection_state_path),
             "monitor_summary": shadow_monitor_summary,
             "comparison_summary": shadow_comparison_summary,
+            "suggestion_summary": shadow_suggestion_summary,
             "promotion_applied": shadow_promotion_applied,
         }
 
@@ -717,6 +896,16 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
             ),
             "Shadow gate JSON": (
                 shadow_summary["comparison_summary"]["gate_json_path"]
+                if isinstance(shadow_summary, dict)
+                else ""
+            ),
+            "Shadow suggestions": (
+                shadow_summary["suggestion_summary"]["suggestion_html_path"]
+                if isinstance(shadow_summary, dict)
+                else ""
+            ),
+            "Shadow suggestion JSON": (
+                shadow_summary["suggestion_summary"]["suggestion_json_path"]
                 if isinstance(shadow_summary, dict)
                 else ""
             ),

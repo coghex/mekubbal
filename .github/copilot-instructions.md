@@ -45,6 +45,7 @@ Primary commands:
 - Scheduled profile matrix + drift alerts: `mekubbal-profile-schedule --config configs/profile-schedule.toml`
 - Optional v3 regime-gated ensemble is configured via `[ensemble_v3]` in profile-schedule configs.
 - Optional shadow gating is configured via `[shadow]` in profile-schedule configs (compares production vs shadow active/ensemble decisions before mutating production state).
+- Shadow mode emits auto-suggestions for `window_runs`/`min_match_ratio` (`profile_shadow_suggestions.json/html`) and the product dashboard SYSTEM view displays them in the shadow panel.
 - Silent review artifacts are emitted by default via schedule config (`profile_ops_journal.csv`, `profile_ops_digest.html`) for periodic audit without real-time alerting.
 - Schedule runs now also emit a product-facing `reports/product_dashboard.html` view (ticker-first UX with advanced sections for dense reports).
 - Daily schedule profile run (GitHub Actions config): `mekubbal-profile-schedule --config configs/profile-schedule-daily.toml`
