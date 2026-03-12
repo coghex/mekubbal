@@ -85,6 +85,10 @@ def _default_profile_schedule_config() -> dict[str, Any]:
             "suggestion_json_path": "reports/profile_shadow_suggestions.json",
             "suggestion_html_path": "reports/profile_shadow_suggestions.html",
             "suggestion_min_history_runs": 8,
+            "suggestion_auto_apply_enabled": False,
+            "suggestion_stability_runs": 3,
+            "suggestion_history_path": "reports/profile_shadow_suggestions_history.csv",
+            "suggestion_state_path": "reports/profile_shadow_suggestion_state.json",
             "health_snapshot_path": "reports/shadow_active_profile_health.csv",
             "health_history_path": "reports/shadow_active_profile_health_history.csv",
             "drift_alerts_csv_path": "reports/shadow_profile_drift_alerts.csv",
@@ -194,6 +198,8 @@ def _validate_profile_schedule_config(config: dict[str, Any], *, config_dir: Pat
         raise ValueError("shadow.min_match_ratio must be in [0, 1].")
     if int(shadow["suggestion_min_history_runs"]) < 3:
         raise ValueError("shadow.suggestion_min_history_runs must be >= 3.")
+    if int(shadow["suggestion_stability_runs"]) < 1:
+        raise ValueError("shadow.suggestion_stability_runs must be >= 1.")
     if int(schedule["ops_digest_lookback_runs"]) < 1:
         raise ValueError("schedule.ops_digest_lookback_runs must be >= 1.")
 
@@ -546,6 +552,132 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(default)
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _load_shadow_suggestion_state(
+    *,
+    suggestion_state_path: Path,
+    fallback_window_runs: int,
+    fallback_min_match_ratio: float,
+    auto_apply_enabled: bool,
+) -> dict[str, Any]:
+    effective_window_runs = int(fallback_window_runs)
+    effective_min_match_ratio = float(fallback_min_match_ratio)
+    loaded_payload: dict[str, Any] | None = None
+    if auto_apply_enabled and suggestion_state_path.exists():
+        payload = json.loads(suggestion_state_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Shadow suggestion state must decode to a JSON object.")
+        state_window = payload.get("active_window_runs")
+        state_ratio = payload.get("active_min_match_ratio")
+        if state_window is not None:
+            effective_window_runs = int(state_window)
+        if state_ratio is not None:
+            effective_min_match_ratio = float(state_ratio)
+        loaded_payload = payload
+    return {
+        "effective_window_runs": int(effective_window_runs),
+        "effective_min_match_ratio": float(effective_min_match_ratio),
+        "loaded_state": loaded_payload,
+    }
+
+
+def _append_shadow_suggestion_history_and_maybe_apply(
+    *,
+    run_timestamp_utc: str,
+    suggestion_summary: dict[str, Any],
+    suggestion_history_path: Path,
+    suggestion_state_path: Path,
+    stability_runs: int,
+    auto_apply_enabled: bool,
+    current_effective_window_runs: int,
+    current_effective_min_match_ratio: float,
+) -> dict[str, Any]:
+    history_row = pd.DataFrame(
+        [
+            {
+                "run_timestamp_utc": str(run_timestamp_utc),
+                "accepted": bool(suggestion_summary.get("accepted", False)),
+                "recommended_window_runs": suggestion_summary.get("recommended_window_runs"),
+                "recommended_min_match_ratio": suggestion_summary.get("recommended_min_match_ratio"),
+                "reasons": ";".join(str(value) for value in suggestion_summary.get("reasons", [])),
+            }
+        ]
+    )
+    history = _append_history_rows(history_row, suggestion_history_path)
+    ordered = history.sort_values("run_timestamp_utc").reset_index(drop=True)
+    tail = ordered.tail(int(stability_runs))
+    tail_accepted = (
+        tail["accepted"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .map({"true": True, "false": False, "1": True, "0": False})
+    )
+    stable_ready = False
+    target_window_runs = None
+    target_min_match_ratio = None
+    if len(tail) >= int(stability_runs) and not tail_accepted.isna().any() and bool(tail_accepted.all()):
+        window_values = pd.to_numeric(tail["recommended_window_runs"], errors="coerce")
+        ratio_values = pd.to_numeric(tail["recommended_min_match_ratio"], errors="coerce")
+        if not window_values.isna().any() and not ratio_values.isna().any():
+            stable_ready = bool(
+                window_values.nunique(dropna=True) == 1
+                and ratio_values.nunique(dropna=True) == 1
+            )
+            if stable_ready:
+                target_window_runs = int(window_values.iloc[-1])
+                target_min_match_ratio = float(ratio_values.iloc[-1])
+
+    auto_apply_applied = False
+    auto_apply_reason = "auto_apply_disabled"
+    next_window_runs = int(current_effective_window_runs)
+    next_min_match_ratio = float(current_effective_min_match_ratio)
+    if auto_apply_enabled:
+        auto_apply_reason = "stability_not_reached"
+        if stable_ready and target_window_runs is not None and target_min_match_ratio is not None:
+            next_window_runs = int(target_window_runs)
+            next_min_match_ratio = float(target_min_match_ratio)
+            auto_apply_reason = "already_active"
+            if (
+                int(current_effective_window_runs) != int(target_window_runs)
+                or abs(float(current_effective_min_match_ratio) - float(target_min_match_ratio)) > 1e-12
+            ):
+                suggestion_state_path.parent.mkdir(parents=True, exist_ok=True)
+                payload = {
+                    "updated_at_utc": str(run_timestamp_utc),
+                    "active_window_runs": int(target_window_runs),
+                    "active_min_match_ratio": float(target_min_match_ratio),
+                    "stability_runs": int(stability_runs),
+                    "source": "stable_shadow_suggestion",
+                    "source_suggestion_json_path": str(suggestion_summary.get("suggestion_json_path", "")),
+                }
+                suggestion_state_path.write_text(
+                    json.dumps(payload, indent=2, sort_keys=True),
+                    encoding="utf-8",
+                )
+                auto_apply_applied = True
+                auto_apply_reason = "applied_new_stable_recommendation"
+
+    return {
+        "suggestion_history_path": str(suggestion_history_path),
+        "suggestion_history_rows": int(len(history)),
+        "stability_runs": int(stability_runs),
+        "stable_ready": bool(stable_ready),
+        "auto_apply_enabled": bool(auto_apply_enabled),
+        "auto_apply_applied": bool(auto_apply_applied),
+        "auto_apply_reason": auto_apply_reason,
+        "active_window_runs_for_next_run": int(next_window_runs),
+        "active_min_match_ratio_for_next_run": float(next_min_match_ratio),
+        "suggestion_state_path": str(suggestion_state_path),
+    }
+
+
 def _update_ops_journal(
     *,
     run_timestamp_utc: str,
@@ -725,6 +857,19 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
             "or run mekubbal-profile-select before schedule monitoring."
         )
 
+    effective_shadow_window_runs = int(shadow_cfg["window_runs"])
+    effective_shadow_min_match_ratio = float(shadow_cfg["min_match_ratio"])
+    shadow_suggestion_state_path = matrix_output_root / str(shadow_cfg["suggestion_state_path"])
+    if shadow_enabled:
+        suggestion_state = _load_shadow_suggestion_state(
+            suggestion_state_path=shadow_suggestion_state_path,
+            fallback_window_runs=int(shadow_cfg["window_runs"]),
+            fallback_min_match_ratio=float(shadow_cfg["min_match_ratio"]),
+            auto_apply_enabled=bool(shadow_cfg["suggestion_auto_apply_enabled"]),
+        )
+        effective_shadow_window_runs = int(suggestion_state["effective_window_runs"])
+        effective_shadow_min_match_ratio = float(suggestion_state["effective_min_match_ratio"])
+
     monitor_summary = run_profile_monitor(
         profile_symbol_summary_path=matrix_summary["symbol_summary_path"],
         selection_state_path=selection_state_path,
@@ -787,14 +932,29 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
             comparison_history_path=matrix_output_root / str(shadow_cfg["comparison_history_path"]),
             comparison_html_path=matrix_output_root / str(shadow_cfg["comparison_html_path"]),
             gate_json_path=matrix_output_root / str(shadow_cfg["gate_json_path"]),
-            window_runs=int(shadow_cfg["window_runs"]),
-            min_match_ratio=float(shadow_cfg["min_match_ratio"]),
+            window_runs=int(effective_shadow_window_runs),
+            min_match_ratio=float(effective_shadow_min_match_ratio),
         )
         shadow_suggestion_summary = _suggest_shadow_thresholds(
             comparison_history_path=Path(str(shadow_comparison_summary["comparison_history_path"])),
             suggestion_json_path=matrix_output_root / str(shadow_cfg["suggestion_json_path"]),
             suggestion_html_path=matrix_output_root / str(shadow_cfg["suggestion_html_path"]),
             min_history_runs=int(shadow_cfg["suggestion_min_history_runs"]),
+        )
+        shadow_suggestion_stability = _append_shadow_suggestion_history_and_maybe_apply(
+            run_timestamp_utc=str(monitor_summary["run_timestamp_utc"]),
+            suggestion_summary=shadow_suggestion_summary,
+            suggestion_history_path=matrix_output_root / str(shadow_cfg["suggestion_history_path"]),
+            suggestion_state_path=shadow_suggestion_state_path,
+            stability_runs=int(shadow_cfg["suggestion_stability_runs"]),
+            auto_apply_enabled=bool(shadow_cfg["suggestion_auto_apply_enabled"]),
+            current_effective_window_runs=int(effective_shadow_window_runs),
+            current_effective_min_match_ratio=float(effective_shadow_min_match_ratio),
+        )
+        shadow_suggestion_summary.update(shadow_suggestion_stability)
+        shadow_suggestion_summary["effective_window_runs_this_run"] = int(effective_shadow_window_runs)
+        shadow_suggestion_summary["effective_min_match_ratio_this_run"] = float(
+            effective_shadow_min_match_ratio
         )
         shadow_promotion_applied = False
         if bool(shadow_cfg["apply_promotion_after_shadow"]) and bool(
@@ -809,8 +969,8 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
             metadata.update(
                 {
                     "applied_at_utc": str(monitor_summary["run_timestamp_utc"]),
-                    "window_runs": int(shadow_cfg["window_runs"]),
-                    "min_match_ratio": float(shadow_cfg["min_match_ratio"]),
+                    "window_runs": int(effective_shadow_window_runs),
+                    "min_match_ratio": float(effective_shadow_min_match_ratio),
                     "source_state_path": str(shadow_selection_state_path),
                 }
             )
@@ -824,6 +984,8 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
             "enabled": True,
             "production_state_path": str(selection_state_path),
             "shadow_state_path": str(shadow_selection_state_path),
+            "effective_window_runs": int(effective_shadow_window_runs),
+            "effective_min_match_ratio": float(effective_shadow_min_match_ratio),
             "monitor_summary": shadow_monitor_summary,
             "comparison_summary": shadow_comparison_summary,
             "suggestion_summary": shadow_suggestion_summary,
@@ -911,6 +1073,16 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
             ),
             "Shadow suggestion JSON": (
                 shadow_summary["suggestion_summary"]["suggestion_json_path"]
+                if isinstance(shadow_summary, dict)
+                else ""
+            ),
+            "Shadow suggestion history CSV": (
+                shadow_summary["suggestion_summary"]["suggestion_history_path"]
+                if isinstance(shadow_summary, dict)
+                else ""
+            ),
+            "Shadow suggestion state JSON": (
+                shadow_summary["suggestion_summary"]["suggestion_state_path"]
                 if isinstance(shadow_summary, dict)
                 else ""
             ),

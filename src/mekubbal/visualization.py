@@ -732,6 +732,11 @@ def render_product_dashboard(
         "reasons": [],
         "suggestion_json_url": _normalize_path(report_label_to_raw.get("shadow suggestion json", "")),
         "suggestion_html_url": _normalize_path(report_label_to_raw.get("shadow suggestions", "")),
+        "suggestion_history_url": _normalize_path(report_label_to_raw.get("shadow suggestion history csv", "")),
+        "state_json_url": _normalize_path(report_label_to_raw.get("shadow suggestion state json", "")),
+        "state_active_window_runs": None,
+        "state_active_min_match_ratio": None,
+        "state_updated_at_utc": None,
         "recommendation_metrics": {},
     }
     shadow_gate_raw = report_label_to_raw.get("shadow gate json")
@@ -823,6 +828,15 @@ def render_product_dashboard(
                         "suggestion_html_url": _normalize_path(
                             report_label_to_raw.get("shadow suggestions", "")
                         ),
+                        "suggestion_history_url": _normalize_path(
+                            report_label_to_raw.get("shadow suggestion history csv", "")
+                        ),
+                        "state_json_url": _normalize_path(
+                            report_label_to_raw.get("shadow suggestion state json", "")
+                        ),
+                        "state_active_window_runs": None,
+                        "state_active_min_match_ratio": None,
+                        "state_updated_at_utc": None,
                         "recommendation_metrics": (
                             loaded_shadow_suggestion.get("recommendation_metrics")
                             if isinstance(
@@ -831,6 +845,35 @@ def render_product_dashboard(
                             else {}
                         ),
                     }
+    shadow_suggestion_state_raw = report_label_to_raw.get("shadow suggestion state json")
+    if shadow_suggestion_state_raw is not None:
+        shadow_suggestion_state_value = str(shadow_suggestion_state_raw).strip()
+        if shadow_suggestion_state_value and "://" not in shadow_suggestion_state_value:
+            shadow_suggestion_state_path = Path(shadow_suggestion_state_value).expanduser()
+            if not shadow_suggestion_state_path.is_absolute():
+                shadow_suggestion_state_path = (Path.cwd() / shadow_suggestion_state_path).resolve()
+            else:
+                shadow_suggestion_state_path = shadow_suggestion_state_path.resolve()
+            if shadow_suggestion_state_path.exists():
+                try:
+                    loaded_shadow_state = json.loads(
+                        shadow_suggestion_state_path.read_text(encoding="utf-8")
+                    )
+                except (json.JSONDecodeError, OSError):
+                    loaded_shadow_state = None
+                if isinstance(loaded_shadow_state, dict):
+                    shadow_suggestion_payload["state_json_url"] = _normalize_path(
+                        shadow_suggestion_state_value
+                    )
+                    shadow_suggestion_payload["state_active_window_runs"] = loaded_shadow_state.get(
+                        "active_window_runs"
+                    )
+                    shadow_suggestion_payload["state_active_min_match_ratio"] = loaded_shadow_state.get(
+                        "active_min_match_ratio"
+                    )
+                    shadow_suggestion_payload["state_updated_at_utc"] = loaded_shadow_state.get(
+                        "updated_at_utc"
+                    )
 
     run_delta_payload: dict[str, Any] = {
         "has_previous": False,
@@ -1363,13 +1406,19 @@ def render_product_dashboard(
         const fallback = shadowGate.gate_json_url ? 'Shadow gate artifact available but not readable in this view.' : 'Shadow evaluation is not enabled for this run.';
         metaEl.textContent = fallback;
         failingEl.textContent = '';
+        const stateRatio = shadowSuggestion.state_active_min_match_ratio == null
+          ? null
+          : `${{(Number(shadowSuggestion.state_active_min_match_ratio) * 100).toFixed(1)}}%`;
+        const stateText = shadowSuggestion.state_active_window_runs == null
+          ? ''
+          : ` Active setting: window_runs=${{shadowSuggestion.state_active_window_runs}}, min_match_ratio=${{stateRatio ?? 'n/a'}}.`;
         if (shadowSuggestion.enabled && shadowSuggestion.accepted) {{
           const ratio = shadowSuggestion.recommended_min_match_ratio == null
             ? 'n/a'
             : `${{(Number(shadowSuggestion.recommended_min_match_ratio) * 100).toFixed(1)}}%`;
-          suggestionEl.innerHTML = `Suggested config: window_runs=${{shadowSuggestion.recommended_window_runs ?? 'n/a'}}, min_match_ratio=${{ratio}}.`;
+          suggestionEl.innerHTML = `Suggested config: window_runs=${{shadowSuggestion.recommended_window_runs ?? 'n/a'}}, min_match_ratio=${{ratio}}.${{stateText}}`;
         }} else {{
-          suggestionEl.textContent = '';
+          suggestionEl.textContent = stateText.trim();
         }}
         detailsEl.style.display = 'none';
         return;
@@ -1405,13 +1454,27 @@ def render_product_dashboard(
         const links = [];
         if (shadowSuggestion.suggestion_html_url) links.push(`<a href="${{shadowSuggestion.suggestion_html_url}}" target="_blank" rel="noopener noreferrer">suggestion report</a>`);
         if (shadowSuggestion.suggestion_json_url) links.push(`<a href="${{shadowSuggestion.suggestion_json_url}}" target="_blank" rel="noopener noreferrer">suggestion json</a>`);
+        if (shadowSuggestion.suggestion_history_url) links.push(`<a href="${{shadowSuggestion.suggestion_history_url}}" target="_blank" rel="noopener noreferrer">suggestion history</a>`);
+        if (shadowSuggestion.state_json_url) links.push(`<a href="${{shadowSuggestion.state_json_url}}" target="_blank" rel="noopener noreferrer">active state</a>`);
         const suffix = links.length ? ` (${{links.join(' · ')}})` : '';
-        suggestionEl.innerHTML = bits.join(' · ') + suffix;
+        const stateRatio = shadowSuggestion.state_active_min_match_ratio == null
+          ? null
+          : `${{(Number(shadowSuggestion.state_active_min_match_ratio) * 100).toFixed(1)}}%`;
+        const stateText = shadowSuggestion.state_active_window_runs == null
+          ? ''
+          : ` Active setting: window_runs=${{shadowSuggestion.state_active_window_runs}}, min_match_ratio=${{stateRatio ?? 'n/a'}}.`;
+        suggestionEl.innerHTML = bits.join(' · ') + suffix + stateText;
       }} else {{
         const reasons = Array.isArray(shadowSuggestion.reasons) && shadowSuggestion.reasons.length
           ? shadowSuggestion.reasons.join('; ')
           : 'insufficient history';
-        suggestionEl.textContent = `Auto-suggestion pending: ${{reasons}}`;
+        const stateRatio = shadowSuggestion.state_active_min_match_ratio == null
+          ? null
+          : `${{(Number(shadowSuggestion.state_active_min_match_ratio) * 100).toFixed(1)}}%`;
+        const stateText = shadowSuggestion.state_active_window_runs == null
+          ? ''
+          : ` Active setting: window_runs=${{shadowSuggestion.state_active_window_runs}}, min_match_ratio=${{stateRatio ?? 'n/a'}}.`;
+        suggestionEl.textContent = `Auto-suggestion pending: ${{reasons}}.${{stateText}}`;
       }}
 
       const rows = Array.isArray(shadowGate.symbols) ? shadowGate.symbols : [];

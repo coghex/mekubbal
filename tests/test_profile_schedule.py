@@ -583,3 +583,361 @@ effective_selection_state_path = "reports/profile_selection_state_shadow_ensembl
     production_loaded = json.loads(production_state.read_text(encoding="utf-8"))
     assert production_loaded["shadow_marker"] == "candidate-ready"
     assert "shadow_gate" in production_loaded
+
+
+def test_run_profile_schedule_auto_applies_stable_shadow_suggestions(monkeypatch, tmp_path):
+    import mekubbal.profile_schedule as schedule_module
+
+    matrix_config = tmp_path / "profile-matrix.toml"
+    schedule_config = tmp_path / "profile-schedule.toml"
+    matrix_config.write_text("symbols = [\"AAPL\"]\n", encoding="utf-8")
+    schedule_config.write_text(
+        f"""
+[schedule]
+matrix_config = "{matrix_config}"
+symbols = []
+health_snapshot_path = "reports/active_profile_health.csv"
+health_history_path = "reports/active_profile_health_history.csv"
+drift_alerts_csv_path = "reports/profile_drift_alerts.csv"
+drift_alerts_html_path = "reports/profile_drift_alerts.html"
+drift_alerts_history_path = "reports/profile_drift_alerts_history.csv"
+ensemble_alerts_csv_path = "reports/profile_ensemble_alerts.csv"
+ensemble_alerts_html_path = "reports/profile_ensemble_alerts.html"
+ensemble_alerts_history_path = "reports/profile_ensemble_alerts_history.csv"
+ticker_summary_csv_path = "reports/ticker_health_summary.csv"
+ticker_summary_html_path = "reports/ticker_health_summary.html"
+summary_json_path = "reports/profile_schedule_summary.json"
+
+[monitor]
+lookback_runs = 1
+max_gap_drop = 0.01
+max_rank_worsening = 0.5
+min_active_minus_base_gap = -0.01
+ensemble_low_confidence_threshold = 0.55
+
+[shadow]
+enabled = true
+production_state_path = "reports/prod_selection_state.json"
+shadow_state_path = "reports/shadow_selection_state.json"
+window_runs = 3
+min_match_ratio = 0.95
+apply_promotion_after_shadow = false
+comparison_csv_path = "reports/profile_shadow_comparison.csv"
+comparison_html_path = "reports/profile_shadow_comparison.html"
+comparison_history_path = "reports/profile_shadow_comparison_history.csv"
+gate_json_path = "reports/profile_shadow_gate.json"
+suggestion_json_path = "reports/profile_shadow_suggestions.json"
+suggestion_html_path = "reports/profile_shadow_suggestions.html"
+suggestion_min_history_runs = 3
+suggestion_auto_apply_enabled = true
+suggestion_stability_runs = 2
+suggestion_history_path = "reports/profile_shadow_suggestions_history.csv"
+suggestion_state_path = "reports/profile_shadow_suggestion_state.json"
+health_snapshot_path = "reports/shadow_active_profile_health.csv"
+health_history_path = "reports/shadow_active_profile_health_history.csv"
+drift_alerts_csv_path = "reports/shadow_profile_drift_alerts.csv"
+drift_alerts_html_path = "reports/shadow_profile_drift_alerts.html"
+drift_alerts_history_path = "reports/shadow_profile_drift_alerts_history.csv"
+ensemble_alerts_csv_path = "reports/shadow_profile_ensemble_alerts.csv"
+ensemble_alerts_html_path = "reports/shadow_profile_ensemble_alerts.html"
+ensemble_alerts_history_path = "reports/shadow_profile_ensemble_alerts_history.csv"
+ticker_summary_csv_path = "reports/shadow_ticker_health_summary.csv"
+ticker_summary_html_path = "reports/shadow_ticker_health_summary.html"
+ensemble_decision_csv_path = "reports/shadow_profile_ensemble_decisions.csv"
+ensemble_history_path = "reports/shadow_profile_ensemble_history.csv"
+effective_selection_state_path = "reports/profile_selection_state_shadow_ensemble.json"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    output_root = tmp_path / "matrix_out"
+    reports_root = output_root / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+    symbol_summary = reports_root / "profile_symbol_summary.csv"
+    pd.DataFrame(
+        [
+            {"symbol": "AAPL", "profile": "base", "symbol_rank": 1, "avg_equity_gap": 0.03},
+            {"symbol": "AAPL", "profile": "candidate", "symbol_rank": 2, "avg_equity_gap": 0.02},
+        ]
+    ).to_csv(symbol_summary, index=False)
+
+    production_state = reports_root / "prod_selection_state.json"
+    production_state.write_text(
+        json.dumps(
+            {
+                "active_profiles": {"AAPL": "base"},
+                "promotion_rule": {"base_profile": "base", "candidate_profile": "candidate"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    shadow_state = reports_root / "shadow_selection_state.json"
+    shadow_state.write_text(
+        json.dumps(
+            {
+                "active_profiles": {"AAPL": "base"},
+                "promotion_rule": {"base_profile": "base", "candidate_profile": "candidate"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [
+            {
+                "run_timestamp_utc": "2026-01-01T00:00:00+00:00",
+                "accepted": True,
+                "recommended_window_runs": 4,
+                "recommended_min_match_ratio": 0.9,
+                "reasons": "",
+            }
+        ]
+    ).to_csv(reports_root / "profile_shadow_suggestions_history.csv", index=False)
+
+    monkeypatch.setattr(
+        schedule_module,
+        "load_profile_matrix_config",
+        lambda _path: {
+            "matrix": {"output_root": str(output_root)},
+            "promotion": {"state_path": "reports/profile_selection_state.json"},
+        },
+    )
+
+    def fake_run_profile_matrix(config_path, *, symbols_override, promotion_override=None):
+        _ = config_path, symbols_override, promotion_override
+        return {
+            "output_root": str(output_root),
+            "symbol_summary_path": str(symbol_summary),
+            "profile_selection": {"state_path": str(shadow_state)},
+            "dashboard_path": str(reports_root / "profile_matrix_workspace.html"),
+            "profile_aggregate_html_path": str(reports_root / "profile_aggregate_leaderboard.html"),
+            "profile_pairwise_html_path": str(reports_root / "profile_pairwise_across_symbols.html"),
+        }
+
+    run_counter = {"value": 0}
+
+    def fake_run_profile_monitor(**kwargs):
+        run_counter["value"] += 1
+        run_time = f"2026-01-0{run_counter['value']}T00:00:00+00:00"
+        snapshot_path = Path(str(kwargs["health_snapshot_path"]))
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(
+            [
+                {
+                    "run_timestamp_utc": run_time,
+                    "symbol": "AAPL",
+                    "selected_profile": "base",
+                    "active_profile": "base",
+                    "active_profile_source": "selection_state",
+                    "active_rank": 1,
+                    "active_gap": 0.03,
+                }
+            ]
+        ).to_csv(snapshot_path, index=False)
+        history_path = Path(str(kwargs["health_history_path"]))
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        if history_path.exists():
+            existing = pd.read_csv(history_path)
+            merged = pd.concat(
+                [
+                    existing,
+                    pd.DataFrame(
+                        [
+                            {
+                                "run_timestamp_utc": run_time,
+                                "symbol": "AAPL",
+                                "selected_profile": "base",
+                                "active_profile": "base",
+                                "active_profile_source": "selection_state",
+                                "active_rank": 1,
+                                "active_gap": 0.03,
+                                "selected_gap": 0.03,
+                                "active_minus_base_gap": 0.0,
+                            }
+                        ]
+                    ),
+                ],
+                ignore_index=True,
+            )
+            merged.to_csv(history_path, index=False)
+        else:
+            pd.DataFrame(
+                [
+                    {
+                        "run_timestamp_utc": run_time,
+                        "symbol": "AAPL",
+                        "selected_profile": "base",
+                        "active_profile": "base",
+                        "active_profile_source": "selection_state",
+                        "active_rank": 1,
+                        "active_gap": 0.03,
+                        "selected_gap": 0.03,
+                        "active_minus_base_gap": 0.0,
+                    }
+                ]
+            ).to_csv(history_path, index=False)
+        ticker_summary_csv = Path(str(kwargs["ticker_summary_csv_path"]))
+        ticker_summary_csv.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "AAPL",
+                    "status": "Healthy",
+                    "selected_profile": "base",
+                    "active_profile": "base",
+                    "active_profile_source": "selection_state",
+                    "recommended_action": "Keep current active profile.",
+                    "summary": "all clear",
+                }
+            ]
+        ).to_csv(ticker_summary_csv, index=False)
+        ticker_summary_html = Path(str(kwargs["ticker_summary_html_path"]))
+        ticker_summary_html.write_text("<html>ticker</html>", encoding="utf-8")
+        drift_html = Path(str(kwargs["drift_alerts_html_path"]))
+        drift_html.write_text("<html>drift</html>", encoding="utf-8")
+        drift_csv = Path(str(kwargs["drift_alerts_csv_path"]))
+        pd.DataFrame(columns=["symbol", "reasons"]).to_csv(drift_csv, index=False)
+        drift_history = kwargs.get("drift_alerts_history_path")
+        if drift_history:
+            Path(str(drift_history)).write_text("symbol,reasons\n", encoding="utf-8")
+        ensemble_html = kwargs.get("ensemble_alerts_html_path")
+        if ensemble_html:
+            Path(str(ensemble_html)).write_text("<html>ensemble</html>", encoding="utf-8")
+        ensemble_csv = kwargs.get("ensemble_alerts_csv_path")
+        if ensemble_csv:
+            pd.DataFrame(columns=["symbol", "reasons"]).to_csv(Path(str(ensemble_csv)), index=False)
+        ensemble_hist = kwargs.get("ensemble_alerts_history_path")
+        if ensemble_hist:
+            Path(str(ensemble_hist)).write_text("symbol,reasons\n", encoding="utf-8")
+        return {
+            "run_timestamp_utc": run_time,
+            "health_snapshot_path": str(snapshot_path),
+            "health_history_path": str(history_path),
+            "drift_alerts_csv_path": str(drift_csv),
+            "drift_alerts_html_path": str(drift_html),
+            "drift_alerts_history_path": str(drift_history) if drift_history else None,
+            "ticker_summary_csv_path": str(ticker_summary_csv),
+            "ticker_summary_html_path": str(ticker_summary_html),
+            "ensemble_alerts_csv_path": str(ensemble_csv) if ensemble_csv else None,
+            "ensemble_alerts_html_path": str(ensemble_html) if ensemble_html else None,
+            "ensemble_alerts_history_path": str(ensemble_hist) if ensemble_hist else None,
+            "ensemble_alerts_count": 0,
+            "ensemble_alerts_history_count": 0,
+            "history_rows": 1,
+            "alerts_count": 0,
+            "alerts_history_count": 0,
+            "ticker_status_counts": {"Healthy": 1},
+            "ensemble_v3_summary": None,
+            "ensemble_effective_selection_state_path": None,
+        }
+
+    comparison_params: list[tuple[int, float]] = []
+
+    def fake_build_shadow_comparison(**kwargs):
+        comparison_params.append((int(kwargs["window_runs"]), float(kwargs["min_match_ratio"])))
+        comparison_csv = reports_root / "profile_shadow_comparison.csv"
+        comparison_history = reports_root / "profile_shadow_comparison_history.csv"
+        comparison_html = reports_root / "profile_shadow_comparison.html"
+        gate_json = reports_root / "profile_shadow_gate.json"
+        pd.DataFrame(
+            [
+                {
+                    "run_timestamp_utc": kwargs["run_timestamp_utc"],
+                    "symbol": "AAPL",
+                    "production_selected_profile": "base",
+                    "production_active_profile": "base",
+                    "production_active_profile_source": "selection_state",
+                    "production_active_rank": 1,
+                    "production_active_gap": 0.03,
+                    "shadow_selected_profile": "base",
+                    "shadow_active_profile": "base",
+                    "shadow_active_profile_source": "selection_state",
+                    "shadow_active_rank": 1,
+                    "shadow_active_gap": 0.03,
+                    "active_profile_match": True,
+                    "active_rank_delta": 0.0,
+                    "active_gap_delta": 0.0,
+                }
+            ]
+        ).to_csv(comparison_csv, index=False)
+        if comparison_history.exists():
+            existing = pd.read_csv(comparison_history)
+            merged = pd.concat([existing, pd.read_csv(comparison_csv)], ignore_index=True)
+            merged.to_csv(comparison_history, index=False)
+        else:
+            pd.read_csv(comparison_csv).to_csv(comparison_history, index=False)
+        comparison_html.write_text("<html>comparison</html>", encoding="utf-8")
+        gate_json.write_text(
+            json.dumps(
+                {
+                    "run_timestamp_utc": kwargs["run_timestamp_utc"],
+                    "window_runs": kwargs["window_runs"],
+                    "min_match_ratio": kwargs["min_match_ratio"],
+                    "overall_gate_passed": True,
+                    "failing_symbols": [],
+                    "symbols": [
+                        {
+                            "symbol": "AAPL",
+                            "window_runs_required": kwargs["window_runs"],
+                            "runs_in_window": kwargs["window_runs"],
+                            "match_ratio": 1.0,
+                            "min_match_ratio": kwargs["min_match_ratio"],
+                            "gate_passed": True,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "comparison_csv_path": str(comparison_csv),
+            "comparison_html_path": str(comparison_html),
+            "comparison_history_path": str(comparison_history),
+            "comparison_rows": 1,
+            "comparison_history_rows": 1,
+            "gate_json_path": str(gate_json),
+            "overall_gate_passed": True,
+            "failing_symbols": [],
+        }
+
+    def fake_suggest_shadow_thresholds(**kwargs):
+        suggestion_json = Path(str(kwargs["suggestion_json_path"]))
+        suggestion_html = Path(str(kwargs["suggestion_html_path"]))
+        suggestion_json.write_text(
+            json.dumps(
+                {
+                    "accepted": True,
+                    "recommended_window_runs": 4,
+                    "recommended_min_match_ratio": 0.9,
+                    "reasons": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        suggestion_html.write_text("<html>suggestions</html>", encoding="utf-8")
+        return {
+            "suggestion_json_path": str(suggestion_json),
+            "suggestion_html_path": str(suggestion_html),
+            "accepted": True,
+            "reasons": [],
+            "recommended_window_runs": 4,
+            "recommended_min_match_ratio": 0.9,
+        }
+
+    monkeypatch.setattr(schedule_module, "run_profile_matrix", fake_run_profile_matrix)
+    monkeypatch.setattr(schedule_module, "run_profile_monitor", fake_run_profile_monitor)
+    monkeypatch.setattr(schedule_module, "_build_shadow_comparison", fake_build_shadow_comparison)
+    monkeypatch.setattr(schedule_module, "_suggest_shadow_thresholds", fake_suggest_shadow_thresholds)
+
+    first = run_profile_schedule(schedule_config)
+    assert comparison_params[0] == (3, 0.95)
+    first_suggestion = first["shadow_summary"]["suggestion_summary"]
+    assert first_suggestion["stable_ready"] is True
+    assert first_suggestion["auto_apply_applied"] is True
+    state_path = Path(first_suggestion["suggestion_state_path"])
+    assert state_path.exists()
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert int(state["active_window_runs"]) == 4
+    assert float(state["active_min_match_ratio"]) == 0.9
+
+    run_profile_schedule(schedule_config)
+    assert comparison_params[-1] == (4, 0.9)
