@@ -126,6 +126,7 @@ It also supports optional `ensemble_v3` regime-gated profile blending in schedul
 Ticker summary now includes selected-vs-ensemble fields (`selected_profile`, `active_profile_source`, regime, and confidence) for operations visibility.
 It also supports optional shadow evaluation via `[shadow]`: schedule runs matrix promotion into a separate shadow state, runs monitor+ensemble against both production and shadow states, writes `profile_shadow_comparison.csv/html` + `profile_shadow_gate.json`, and can gate production-state mutation until a fixed agreement window passes.
 Shadow mode now also auto-generates threshold suggestions (`profile_shadow_suggestions.json/html`) for `shadow.window_runs` and `shadow.min_match_ratio`, and the product dashboard SYSTEM page surfaces those recommendations in the shadow panel.
+The SYSTEM page now also includes a "What changed since last run" summary card (profile/source switches, gap/rank deltas, and shadow agreement delta when history is available).
 For silent operations, schedule now writes a rolling ops journal (`profile_ops_journal.csv`) and compact digest page (`profile_ops_digest.html`) so automatic rollback/shadow safeguards can run quietly while still keeping periodic audit visibility.
 Schedule now also writes a product-facing dashboard (`product_dashboard.html`) with left ticker navigation, a default system visualization view, ticker-focused performance views, and dense research reports tucked behind advanced dropdown sections.
 

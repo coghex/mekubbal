@@ -899,6 +899,11 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
                 if isinstance(shadow_summary, dict)
                 else ""
             ),
+            "Shadow comparison history CSV": (
+                shadow_summary["comparison_summary"]["comparison_history_path"]
+                if isinstance(shadow_summary, dict)
+                else ""
+            ),
             "Shadow suggestions": (
                 shadow_summary["suggestion_summary"]["suggestion_html_path"]
                 if isinstance(shadow_summary, dict)

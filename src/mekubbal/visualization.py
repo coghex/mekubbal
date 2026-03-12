@@ -832,6 +832,242 @@ def render_product_dashboard(
                         ),
                     }
 
+    run_delta_payload: dict[str, Any] = {
+        "has_previous": False,
+        "latest_run_timestamp": None,
+        "previous_run_timestamp": None,
+        "symbols_compared": 0,
+        "profile_change_count": 0,
+        "source_change_count": 0,
+        "gap_up_count": 0,
+        "gap_down_count": 0,
+        "rank_improved_count": 0,
+        "rank_worsened_count": 0,
+        "largest_gap_up_symbol": None,
+        "largest_gap_up_delta": None,
+        "largest_gap_down_symbol": None,
+        "largest_gap_down_delta": None,
+        "symbol_changes": [],
+        "shadow_match_ratio_latest": None,
+        "shadow_match_ratio_previous": None,
+        "shadow_match_ratio_delta": None,
+        "shadow_recovered_matches": 0,
+        "shadow_new_mismatches": 0,
+    }
+    health_for_delta = health.copy()
+    if "active_profile" in health_for_delta.columns:
+        health_for_delta["active_profile"] = health_for_delta["active_profile"].astype(str)
+    if "active_profile_source" in health_for_delta.columns:
+        health_for_delta["active_profile_source"] = health_for_delta["active_profile_source"].astype(str)
+    run_values = sorted(
+        {
+            str(value)
+            for value in health_for_delta.get("run_timestamp_utc", []).tolist()
+            if str(value).strip()
+        }
+    )
+    if len(run_values) >= 2:
+        latest_run = run_values[-1]
+        previous_run = run_values[-2]
+        latest_rows = health_for_delta[health_for_delta["run_timestamp_utc"].astype(str) == latest_run].copy()
+        previous_rows = health_for_delta[
+            health_for_delta["run_timestamp_utc"].astype(str) == previous_run
+        ].copy()
+        keep_cols = [
+            "symbol",
+            "active_profile",
+            "active_profile_source",
+            "active_rank",
+            "active_gap",
+        ]
+        latest_rows = latest_rows[[column for column in keep_cols if column in latest_rows.columns]].copy()
+        previous_rows = previous_rows[
+            [column for column in keep_cols if column in previous_rows.columns]
+        ].copy()
+        latest_rows = latest_rows.rename(
+            columns={column: f"{column}_latest" for column in latest_rows.columns if column != "symbol"}
+        )
+        previous_rows = previous_rows.rename(
+            columns={column: f"{column}_previous" for column in previous_rows.columns if column != "symbol"}
+        )
+        merged_delta = latest_rows.merge(previous_rows, on="symbol", how="inner")
+        if not merged_delta.empty:
+            merged_delta["active_rank_latest"] = pd.to_numeric(
+                merged_delta.get("active_rank_latest"), errors="coerce"
+            )
+            merged_delta["active_rank_previous"] = pd.to_numeric(
+                merged_delta.get("active_rank_previous"), errors="coerce"
+            )
+            merged_delta["active_gap_latest"] = pd.to_numeric(
+                merged_delta.get("active_gap_latest"), errors="coerce"
+            )
+            merged_delta["active_gap_previous"] = pd.to_numeric(
+                merged_delta.get("active_gap_previous"), errors="coerce"
+            )
+            merged_delta["rank_delta"] = (
+                merged_delta["active_rank_latest"] - merged_delta["active_rank_previous"]
+            )
+            merged_delta["gap_delta"] = (
+                merged_delta["active_gap_latest"] - merged_delta["active_gap_previous"]
+            )
+            latest_profile_series = (
+                merged_delta["active_profile_latest"].astype(str)
+                if "active_profile_latest" in merged_delta.columns
+                else pd.Series([""] * len(merged_delta))
+            )
+            previous_profile_series = (
+                merged_delta["active_profile_previous"].astype(str)
+                if "active_profile_previous" in merged_delta.columns
+                else pd.Series([""] * len(merged_delta))
+            )
+            latest_source_series = (
+                merged_delta["active_profile_source_latest"].astype(str)
+                if "active_profile_source_latest" in merged_delta.columns
+                else pd.Series([""] * len(merged_delta))
+            )
+            previous_source_series = (
+                merged_delta["active_profile_source_previous"].astype(str)
+                if "active_profile_source_previous" in merged_delta.columns
+                else pd.Series([""] * len(merged_delta))
+            )
+            merged_delta["profile_changed"] = latest_profile_series != previous_profile_series
+            merged_delta["source_changed"] = latest_source_series != previous_source_series
+            run_delta_payload.update(
+                {
+                    "has_previous": True,
+                    "latest_run_timestamp": latest_run,
+                    "previous_run_timestamp": previous_run,
+                    "symbols_compared": int(len(merged_delta)),
+                    "profile_change_count": int(merged_delta["profile_changed"].sum()),
+                    "source_change_count": int(merged_delta["source_changed"].sum()),
+                    "gap_up_count": int((merged_delta["gap_delta"] > 0).sum()),
+                    "gap_down_count": int((merged_delta["gap_delta"] < 0).sum()),
+                    "rank_improved_count": int((merged_delta["rank_delta"] < 0).sum()),
+                    "rank_worsened_count": int((merged_delta["rank_delta"] > 0).sum()),
+                }
+            )
+            if (merged_delta["gap_delta"] > 0).any():
+                best = merged_delta.loc[merged_delta["gap_delta"].idxmax()]
+                run_delta_payload["largest_gap_up_symbol"] = str(best["symbol"])
+                run_delta_payload["largest_gap_up_delta"] = float(best["gap_delta"])
+            if (merged_delta["gap_delta"] < 0).any():
+                worst = merged_delta.loc[merged_delta["gap_delta"].idxmin()]
+                run_delta_payload["largest_gap_down_symbol"] = str(worst["symbol"])
+                run_delta_payload["largest_gap_down_delta"] = float(worst["gap_delta"])
+            changes = merged_delta[
+                merged_delta["profile_changed"]
+                | merged_delta["source_changed"]
+                | (merged_delta["gap_delta"].abs() > 1e-12)
+                | (merged_delta["rank_delta"].abs() > 1e-12)
+            ].copy()
+            if not changes.empty:
+                changes = changes.sort_values(
+                    ["profile_changed", "gap_delta"],
+                    ascending=[False, False],
+                    key=lambda column: column
+                    if column.name != "gap_delta"
+                    else column.abs(),
+                )
+            run_delta_payload["symbol_changes"] = [
+                {
+                    "symbol": str(item.get("symbol", "")),
+                    "profile_changed": bool(item.get("profile_changed", False)),
+                    "profile_latest": str(item.get("active_profile_latest", "")),
+                    "profile_previous": str(item.get("active_profile_previous", "")),
+                    "source_changed": bool(item.get("source_changed", False)),
+                    "source_latest": str(item.get("active_profile_source_latest", "")),
+                    "source_previous": str(item.get("active_profile_source_previous", "")),
+                    "rank_delta": (
+                        float(item.get("rank_delta")) if pd.notna(item.get("rank_delta")) else None
+                    ),
+                    "gap_delta": float(item.get("gap_delta")) if pd.notna(item.get("gap_delta")) else None,
+                }
+                for _, item in changes.head(12).iterrows()
+            ]
+
+    shadow_history_raw = report_label_to_raw.get("shadow comparison history csv")
+    if shadow_history_raw is not None:
+        shadow_history_value = str(shadow_history_raw).strip()
+        if shadow_history_value and "://" not in shadow_history_value:
+            shadow_history_path = Path(shadow_history_value).expanduser()
+            if not shadow_history_path.is_absolute():
+                shadow_history_path = (Path.cwd() / shadow_history_path).resolve()
+            else:
+                shadow_history_path = shadow_history_path.resolve()
+            if shadow_history_path.exists():
+                try:
+                    shadow_history = pd.read_csv(shadow_history_path)
+                except (OSError, pd.errors.ParserError):
+                    shadow_history = pd.DataFrame()
+                required_shadow_history = {"run_timestamp_utc", "symbol", "active_profile_match"}
+                if not shadow_history.empty and required_shadow_history.issubset(shadow_history.columns):
+                    shadow_history = shadow_history.copy()
+                    shadow_history["run_timestamp_utc"] = shadow_history["run_timestamp_utc"].astype(str)
+                    shadow_history["symbol"] = shadow_history["symbol"].astype(str).str.upper()
+                    shadow_history["active_profile_match"] = (
+                        shadow_history["active_profile_match"]
+                        .astype(str)
+                        .str.strip()
+                        .str.lower()
+                        .map({"true": 1, "false": 0, "1": 1, "0": 0})
+                    )
+                    shadow_history = shadow_history.dropna(subset=["active_profile_match"])
+                    if not shadow_history.empty:
+                        shadow_runs = sorted(
+                            {
+                                str(value)
+                                for value in shadow_history["run_timestamp_utc"].tolist()
+                                if str(value).strip()
+                            }
+                        )
+                        if len(shadow_runs) >= 2:
+                            shadow_latest = shadow_runs[-1]
+                            shadow_previous = shadow_runs[-2]
+                            latest_match = shadow_history[
+                                shadow_history["run_timestamp_utc"] == shadow_latest
+                            ][["symbol", "active_profile_match"]].rename(
+                                columns={"active_profile_match": "match_latest"}
+                            )
+                            previous_match = shadow_history[
+                                shadow_history["run_timestamp_utc"] == shadow_previous
+                            ][["symbol", "active_profile_match"]].rename(
+                                columns={"active_profile_match": "match_previous"}
+                            )
+                            merged_match = latest_match.merge(previous_match, on="symbol", how="inner")
+                            if not merged_match.empty:
+                                merged_match["match_latest"] = pd.to_numeric(
+                                    merged_match["match_latest"], errors="coerce"
+                                )
+                                merged_match["match_previous"] = pd.to_numeric(
+                                    merged_match["match_previous"], errors="coerce"
+                                )
+                                merged_match = merged_match.dropna(
+                                    subset=["match_latest", "match_previous"]
+                                )
+                                if not merged_match.empty:
+                                    run_delta_payload["shadow_match_ratio_latest"] = float(
+                                        merged_match["match_latest"].mean()
+                                    )
+                                    run_delta_payload["shadow_match_ratio_previous"] = float(
+                                        merged_match["match_previous"].mean()
+                                    )
+                                    run_delta_payload["shadow_match_ratio_delta"] = float(
+                                        run_delta_payload["shadow_match_ratio_latest"]
+                                        - run_delta_payload["shadow_match_ratio_previous"]
+                                    )
+                                    run_delta_payload["shadow_recovered_matches"] = int(
+                                        (
+                                            (merged_match["match_previous"] < 0.5)
+                                            & (merged_match["match_latest"] >= 0.5)
+                                        ).sum()
+                                    )
+                                    run_delta_payload["shadow_new_mismatches"] = int(
+                                        (
+                                            (merged_match["match_previous"] >= 0.5)
+                                            & (merged_match["match_latest"] < 0.5)
+                                        ).sum()
+                                    )
+
     tickers_sorted = sorted(ticker_payload)
     if not tickers_sorted:
         raise ValueError("No ticker rows found for product dashboard.")
@@ -873,6 +1109,15 @@ def render_product_dashboard(
     .shadow-suggestion {{ margin-top: 6px; font-size: 12px; color: #334155; }}
     .shadow-table-wrap {{ margin-top: 8px; }}
     .shadow-table-wrap th, .shadow-table-wrap td {{ font-size: 12px; }}
+    .delta-panel {{ background: #fff; border: 1px solid #dbe1ea; border-radius: 10px; padding: 10px; }}
+    .delta-head {{ display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
+    .delta-sub {{ margin-top: 6px; font-size: 12px; color: #475569; }}
+    .delta-grid {{ margin-top: 8px; display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 8px; }}
+    .delta-item {{ background: #f8fafc; border: 1px solid #e5eaf0; border-radius: 8px; padding: 8px; }}
+    .delta-item .k {{ font-size: 11px; color: #64748b; text-transform: uppercase; }}
+    .delta-item .v {{ margin-top: 4px; font-size: 14px; font-weight: 700; }}
+    .delta-table-wrap {{ margin-top: 8px; }}
+    .delta-table-wrap th, .delta-table-wrap td {{ font-size: 12px; }}
     #system-svg {{ width: 100%; flex: 1; min-height: 320px; background: #0b1220; border-radius: 10px; }}
     .ticker-header {{ display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
     .ticker-name {{ font-size: 22px; font-weight: 700; }}
@@ -928,6 +1173,34 @@ def render_product_dashboard(
                 </tr>
               </thead>
               <tbody id="shadow-table-body"></tbody>
+            </table>
+          </details>
+        </div>
+        <div class="delta-panel">
+          <div class="delta-head">
+            <div class="label">What changed since last run</div>
+            <div id="delta-run-range" class="chip">n/a</div>
+          </div>
+          <div id="delta-sub" class="delta-sub"></div>
+          <div class="delta-grid">
+            <div class="delta-item"><div class="k">Profile changes</div><div id="delta-profile-changes" class="v">n/a</div></div>
+            <div class="delta-item"><div class="k">Score deltas</div><div id="delta-score-deltas" class="v">n/a</div></div>
+            <div class="delta-item"><div class="k">Rank deltas</div><div id="delta-rank-deltas" class="v">n/a</div></div>
+            <div class="delta-item"><div class="k">Shadow deltas</div><div id="delta-shadow-deltas" class="v">n/a</div></div>
+          </div>
+          <details id="delta-details" class="delta-table-wrap">
+            <summary>Per-ticker run deltas</summary>
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Profile</th>
+                  <th>Source</th>
+                  <th>Gap Δ</th>
+                  <th>Rank Δ</th>
+                </tr>
+              </thead>
+              <tbody id="delta-table-body"></tbody>
             </table>
           </details>
         </div>
@@ -992,6 +1265,7 @@ def render_product_dashboard(
     const globalReports = {json.dumps(dense_links, sort_keys=True)};
     const shadowGate = {json.dumps(shadow_gate_payload, sort_keys=True)};
     const shadowSuggestion = {json.dumps(shadow_suggestion_payload, sort_keys=True)};
+    const runDelta = {json.dumps(run_delta_payload, sort_keys=True)};
     const tickerOrder = {json.dumps(tickers_sorted)};
     let currentTicker = tickerOrder[0];
 
@@ -1006,6 +1280,7 @@ def render_product_dashboard(
       document.getElementById('ticker-panel').classList.remove('active');
       resetNav('nav-system');
       renderShadowPanel();
+      renderRunDelta();
       drawSystem();
     }}
 
@@ -1152,6 +1427,83 @@ def render_product_dashboard(
         const required = row.min_match_ratio == null ? 'n/a' : `${{(row.min_match_ratio * 100).toFixed(1)}}%`;
         const runs = `${{row.runs_in_window ?? 'n/a'}}/${{row.window_runs_required ?? 'n/a'}}`;
         tr.innerHTML = `<td>${{row.symbol || ''}}</td><td>${{gate}}</td><td>${{runs}}</td><td>${{ratio}}</td><td>${{required}}</td>`;
+        tableBody.appendChild(tr);
+      }});
+    }}
+
+    function renderRunDelta() {{
+      const rangeEl = document.getElementById('delta-run-range');
+      const subEl = document.getElementById('delta-sub');
+      const profileEl = document.getElementById('delta-profile-changes');
+      const scoreEl = document.getElementById('delta-score-deltas');
+      const rankEl = document.getElementById('delta-rank-deltas');
+      const shadowEl = document.getElementById('delta-shadow-deltas');
+      const detailsEl = document.getElementById('delta-details');
+      const tableBody = document.getElementById('delta-table-body');
+      tableBody.innerHTML = '';
+
+      if (!runDelta.has_previous) {{
+        rangeEl.textContent = 'Need 2 runs';
+        subEl.textContent = 'Not enough history yet to compute run-to-run changes.';
+        profileEl.textContent = 'n/a';
+        scoreEl.textContent = 'n/a';
+        rankEl.textContent = 'n/a';
+        shadowEl.textContent = 'n/a';
+        detailsEl.style.display = 'none';
+        return;
+      }}
+
+      const latest = runDelta.latest_run_timestamp || 'latest';
+      const previous = runDelta.previous_run_timestamp || 'previous';
+      rangeEl.textContent = `${{previous}} → ${{latest}}`;
+      subEl.textContent = `Compared symbols: ${{runDelta.symbols_compared ?? 0}}`;
+
+      const profileParts = [
+        `${{runDelta.profile_change_count ?? 0}} profile changes`,
+        `${{runDelta.source_change_count ?? 0}} source changes`
+      ];
+      profileEl.textContent = profileParts.join(' · ');
+
+      const scoreParts = [
+        `up ${{runDelta.gap_up_count ?? 0}}`,
+        `down ${{runDelta.gap_down_count ?? 0}}`
+      ];
+      if (runDelta.largest_gap_up_symbol && runDelta.largest_gap_up_delta != null) {{
+        scoreParts.push(`best ${{runDelta.largest_gap_up_symbol}} ${{(Number(runDelta.largest_gap_up_delta) * 100).toFixed(2)}}%`);
+      }}
+      if (runDelta.largest_gap_down_symbol && runDelta.largest_gap_down_delta != null) {{
+        scoreParts.push(`worst ${{runDelta.largest_gap_down_symbol}} ${{(Number(runDelta.largest_gap_down_delta) * 100).toFixed(2)}}%`);
+      }}
+      scoreEl.textContent = scoreParts.join(' · ');
+
+      rankEl.textContent = `improved ${{runDelta.rank_improved_count ?? 0}} · worsened ${{runDelta.rank_worsened_count ?? 0}}`;
+
+      if (runDelta.shadow_match_ratio_latest == null || runDelta.shadow_match_ratio_previous == null) {{
+        shadowEl.textContent = 'n/a';
+      }} else {{
+        const latestPct = (Number(runDelta.shadow_match_ratio_latest) * 100).toFixed(1);
+        const prevPct = (Number(runDelta.shadow_match_ratio_previous) * 100).toFixed(1);
+        const deltaPct = runDelta.shadow_match_ratio_delta == null ? 'n/a' : `${{(Number(runDelta.shadow_match_ratio_delta) * 100).toFixed(1)}}%`;
+        shadowEl.textContent = `match ${{prevPct}}% → ${{latestPct}}% (Δ ${{deltaPct}}) · recovered ${{runDelta.shadow_recovered_matches ?? 0}} · new mismatches ${{runDelta.shadow_new_mismatches ?? 0}}`;
+      }}
+
+      const rows = Array.isArray(runDelta.symbol_changes) ? runDelta.symbol_changes : [];
+      if (rows.length === 0) {{
+        detailsEl.style.display = 'none';
+        return;
+      }}
+      detailsEl.style.display = '';
+      rows.forEach((row) => {{
+        const tr = document.createElement('tr');
+        const profileText = row.profile_changed
+          ? `${{row.profile_previous || 'n/a'}} → ${{row.profile_latest || 'n/a'}}`
+          : (row.profile_latest || row.profile_previous || 'n/a');
+        const sourceText = row.source_changed
+          ? `${{row.source_previous || 'n/a'}} → ${{row.source_latest || 'n/a'}}`
+          : (row.source_latest || row.source_previous || 'n/a');
+        const gapText = row.gap_delta == null ? 'n/a' : `${{(Number(row.gap_delta) * 100).toFixed(2)}}%`;
+        const rankText = row.rank_delta == null ? 'n/a' : Number(row.rank_delta).toFixed(2);
+        tr.innerHTML = `<td>${{row.symbol || ''}}</td><td>${{profileText}}</td><td>${{sourceText}}</td><td>${{gapText}}</td><td>${{rankText}}</td>`;
         tableBody.appendChild(tr);
       }});
     }}

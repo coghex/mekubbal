@@ -246,6 +246,8 @@ def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
     text = result.read_text(encoding="utf-8")
     assert "SYSTEM" in text
     assert "showSystem" in text
+    assert "renderRunDelta" in text
+    assert "What changed since last run" in text
     assert "showTicker" in text
     assert "System matrix workspace" in text
     assert "aapl_candidate.html" in text
@@ -259,6 +261,7 @@ def test_render_product_dashboard_includes_shadow_gate_panel(tmp_path):
     shadow_comparison = tmp_path / "profile_shadow_comparison.html"
     shadow_gate = tmp_path / "profile_shadow_gate.json"
     shadow_suggestion = tmp_path / "profile_shadow_suggestions.json"
+    shadow_history = tmp_path / "profile_shadow_comparison_history.csv"
     shadow_comparison.write_text("<html>shadow comparison</html>", encoding="utf-8")
     shadow_gate.write_text(
         json.dumps(
@@ -308,6 +311,30 @@ def test_render_product_dashboard_includes_shadow_gate_panel(tmp_path):
         ),
         encoding="utf-8",
     )
+    pd.DataFrame(
+        [
+            {
+                "run_timestamp_utc": "2026-01-02T00:00:00+00:00",
+                "symbol": "AAPL",
+                "active_profile_match": True,
+            },
+            {
+                "run_timestamp_utc": "2026-01-02T00:00:00+00:00",
+                "symbol": "MSFT",
+                "active_profile_match": False,
+            },
+            {
+                "run_timestamp_utc": "2026-01-03T00:00:00+00:00",
+                "symbol": "AAPL",
+                "active_profile_match": True,
+            },
+            {
+                "run_timestamp_utc": "2026-01-03T00:00:00+00:00",
+                "symbol": "MSFT",
+                "active_profile_match": True,
+            },
+        ]
+    ).to_csv(shadow_history, index=False)
 
     pd.DataFrame(
         [
@@ -361,6 +388,7 @@ def test_render_product_dashboard_includes_shadow_gate_panel(tmp_path):
         global_report_paths={
             "Shadow comparison": shadow_comparison,
             "Shadow gate JSON": shadow_gate,
+            "Shadow comparison history CSV": shadow_history,
             "Shadow suggestions": tmp_path / "profile_shadow_suggestions.html",
             "Shadow suggestion JSON": shadow_suggestion,
         },
@@ -371,3 +399,4 @@ def test_render_product_dashboard_includes_shadow_gate_panel(tmp_path):
     assert "shadow-status" in text
     assert "MSFT:match_ratio(0.800<1.000)" in text
     assert "Suggested config: window_runs=" in text
+    assert '"shadow_match_ratio_latest": 1.0' in text
