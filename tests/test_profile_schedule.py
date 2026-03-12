@@ -75,10 +75,13 @@ min_active_minus_base_gap = -0.01
     assert Path(summary["monitor_summary"]["ticker_summary_csv_path"]).exists()
     assert Path(summary["monitor_summary"]["ticker_summary_html_path"]).exists()
     assert Path(summary["product_dashboard_path"]).exists()
+    assert Path(summary["ops_summary"]["journal_csv_path"]).exists()
+    assert Path(summary["ops_summary"]["digest_html_path"]).exists()
     loaded = json.loads(Path(summary["summary_json_path"]).read_text(encoding="utf-8"))
     assert "matrix_summary" in loaded
     assert "monitor_summary" in loaded
     assert "product_dashboard_path" in loaded
+    assert "ops_summary" in loaded
 
 
 def test_run_profile_schedule_runs_rollback_when_enabled(monkeypatch, tmp_path):

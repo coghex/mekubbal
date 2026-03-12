@@ -14,6 +14,9 @@ ticker_summary_html_path = "reports/ticker_health_summary.html"
 product_dashboard_path = "reports/product_dashboard.html"
 product_dashboard_title = "Mekubbal Market Pulse"
 summary_json_path = "reports/profile_schedule_summary.json"
+ops_journal_csv_path = "reports/profile_ops_journal.csv"
+ops_digest_html_path = "reports/profile_ops_digest.html"
+ops_digest_lookback_runs = 14
 
 [monitor]
 lookback_runs = 3

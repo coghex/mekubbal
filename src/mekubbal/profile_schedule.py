@@ -32,6 +32,9 @@ def _default_profile_schedule_config() -> dict[str, Any]:
             "product_dashboard_path": "reports/product_dashboard.html",
             "product_dashboard_title": "Mekubbal Market Pulse",
             "summary_json_path": "reports/profile_schedule_summary.json",
+            "ops_journal_csv_path": "reports/profile_ops_journal.csv",
+            "ops_digest_html_path": "reports/profile_ops_digest.html",
+            "ops_digest_lookback_runs": 14,
         },
         "monitor": {
             "lookback_runs": 3,
@@ -186,6 +189,8 @@ def _validate_profile_schedule_config(config: dict[str, Any], *, config_dir: Pat
     min_match_ratio = float(shadow["min_match_ratio"])
     if min_match_ratio < 0 or min_match_ratio > 1:
         raise ValueError("shadow.min_match_ratio must be in [0, 1].")
+    if int(schedule["ops_digest_lookback_runs"]) < 1:
+        raise ValueError("schedule.ops_digest_lookback_runs must be >= 1.")
 
 
 def _resolve_relative_to(base: Path, raw_path: str | Path) -> Path:
@@ -359,6 +364,97 @@ def _build_shadow_comparison(
         "gate_json_path": str(gate_json_path),
         "overall_gate_passed": overall_gate_passed,
         "failing_symbols": failing_symbols,
+    }
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _update_ops_journal(
+    *,
+    run_timestamp_utc: str,
+    journal_csv_path: Path,
+    digest_html_path: Path,
+    digest_lookback_runs: int,
+    monitor_summary: dict[str, Any],
+    shadow_summary: dict[str, Any] | None,
+    rollback_summary: dict[str, Any] | None,
+) -> dict[str, Any]:
+    shadow_gate = (
+        shadow_summary.get("comparison_summary", {})
+        if isinstance(shadow_summary, dict)
+        else {}
+    )
+    row = pd.DataFrame(
+        [
+            {
+                "run_timestamp_utc": str(run_timestamp_utc),
+                "symbols_in_snapshot": _safe_int(monitor_summary.get("symbols_in_snapshot")),
+                "health_history_rows": _safe_int(monitor_summary.get("history_rows")),
+                "drift_alerts_count": _safe_int(monitor_summary.get("alerts_count")),
+                "ensemble_alerts_count": _safe_int(monitor_summary.get("ensemble_alerts_count")),
+                "shadow_enabled": bool(isinstance(shadow_summary, dict)),
+                "shadow_gate_passed": (
+                    bool(shadow_gate.get("overall_gate_passed"))
+                    if isinstance(shadow_summary, dict)
+                    else None
+                ),
+                "shadow_failing_symbols": (
+                    ";".join(str(value) for value in shadow_gate.get("failing_symbols", []))
+                    if isinstance(shadow_summary, dict)
+                    else ""
+                ),
+                "shadow_promotion_applied": (
+                    bool(shadow_summary.get("promotion_applied"))
+                    if isinstance(shadow_summary, dict)
+                    else False
+                ),
+                "rollback_enabled": bool(isinstance(rollback_summary, dict)),
+                "rollback_recommended_count": (
+                    _safe_int(rollback_summary.get("rollback_recommended_count"))
+                    if isinstance(rollback_summary, dict)
+                    else 0
+                ),
+                "rollback_applied_count": (
+                    _safe_int(rollback_summary.get("rollback_applied_count"))
+                    if isinstance(rollback_summary, dict)
+                    else 0
+                ),
+            }
+        ]
+    )
+    shadow_gate_failed = row["shadow_gate_passed"].map(lambda value: value is False)
+    row["attention_needed"] = (
+        (row["drift_alerts_count"] > 0)
+        | (row["ensemble_alerts_count"] > 0)
+        | (row["rollback_recommended_count"] > 0)
+        | (row["rollback_applied_count"] > 0)
+        | (row["shadow_enabled"].astype(bool) & shadow_gate_failed)
+    )
+    journal = _append_history_rows(row, journal_csv_path)
+    latest = journal.sort_values("run_timestamp_utc").tail(int(digest_lookback_runs)).reset_index(drop=True)
+    digest_html_path.parent.mkdir(parents=True, exist_ok=True)
+    digest_html_path.write_text(
+        _html_table(
+            "Profile Ops Digest",
+            (
+                "Silent operations digest for automatic safeguards. "
+                "Use this for periodic review instead of real-time alerts."
+            ),
+            latest,
+        ),
+        encoding="utf-8",
+    )
+    return {
+        "journal_csv_path": str(journal_csv_path),
+        "digest_html_path": str(digest_html_path),
+        "journal_rows": int(len(journal)),
+        "digest_rows": int(len(latest)),
+        "latest_attention_needed": bool(latest.iloc[-1]["attention_needed"]) if not latest.empty else False,
     }
 
 
@@ -581,12 +677,22 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
             apply_rollback=bool(rollback_cfg["apply_rollback"]),
             run_timestamp_utc=monitor_summary["run_timestamp_utc"],
         )
+    ops_summary = _update_ops_journal(
+        run_timestamp_utc=str(monitor_summary["run_timestamp_utc"]),
+        journal_csv_path=matrix_output_root / str(schedule_cfg["ops_journal_csv_path"]),
+        digest_html_path=matrix_output_root / str(schedule_cfg["ops_digest_html_path"]),
+        digest_lookback_runs=int(schedule_cfg["ops_digest_lookback_runs"]),
+        monitor_summary=monitor_summary,
+        shadow_summary=shadow_summary,
+        rollback_summary=rollback_summary,
+    )
     summary = {
         "config_path": str(config_file),
         "matrix_summary": matrix_summary,
         "monitor_summary": monitor_summary,
         "shadow_summary": shadow_summary,
         "rollback_summary": rollback_summary,
+        "ops_summary": ops_summary,
     }
     summary_path = matrix_output_root / str(schedule_cfg["summary_json_path"])
     summary_path.parent.mkdir(parents=True, exist_ok=True)
@@ -617,6 +723,8 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
             "Rollback state JSON": (
                 rollback_summary["rollback_state_path"] if isinstance(rollback_summary, dict) else ""
             ),
+            "Ops digest": ops_summary["digest_html_path"],
+            "Ops journal CSV": ops_summary["journal_csv_path"],
             "Schedule summary JSON": summary_path,
         },
     )
