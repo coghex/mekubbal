@@ -225,13 +225,13 @@ ensemble_low_confidence_threshold = 0.55
 
     assert not (output_root / "stale.txt").exists()
     assert [call["run_timestamp_utc"] for call in calls] == [
-        "2026-01-05T00:00:00+00:00",
         "2026-01-06T00:00:00+00:00",
+        "2026-01-07T00:00:00+00:00",
     ]
     assert calls[0]["data_template"].endswith("{symbol_lower}.csv")
     assert summary["runs_replayed"] == 2
-    assert summary["first_replay_date"] == "2026-01-05"
-    assert summary["last_replay_date"] == "2026-01-06"
+    assert summary["first_replay_date"] == "2026-01-06"
+    assert summary["last_replay_date"] == "2026-01-07"
     loaded = json.loads(Path(summary["summary_json_path"]).read_text(encoding="utf-8"))
     assert loaded["symbols"] == ["AAPL", "MSFT"]
 
@@ -426,3 +426,153 @@ ensemble_low_confidence_threshold = 0.55
             "reason": "RDDT only has 2 rows, but backfill requires at least 3 rows per ticker.",
         }
     ]
+
+
+def test_run_profile_backfill_adds_short_history_symbol_when_it_becomes_eligible(monkeypatch, tmp_path):
+    import mekubbal.profile_backfill as backfill_module
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _write_ohlcv(data_dir / "aapl.csv", [f"2026-01-0{day}" for day in range(1, 8)])
+    _write_ohlcv(data_dir / "rddt.csv", [f"2026-01-0{day}" for day in range(5, 8)])
+
+    _write_control_config(tmp_path / "control-base.toml", train_window=4, test_window=1)
+    _write_control_config(tmp_path / "control-candidate.toml", train_window=4, test_window=1)
+    _write_control_config(tmp_path / "short-base.toml", train_window=2, test_window=1)
+    _write_control_config(tmp_path / "short-candidate.toml", train_window=2, test_window=1)
+
+    _write_runner_config(tmp_path / "profile-runner.toml")
+    _write_runner_config(
+        tmp_path / "profile-runner-short.toml",
+        base_name="base",
+        candidate_name="candidate",
+    )
+    short_runner_path = tmp_path / "profile-runner-short.toml"
+    short_runner_path.write_text(
+        f"""
+[runner]
+output_root = "logs/profile_runner_short"
+profile_summary_path = "reports/profile_summary.csv"
+pairwise_csv_path = "reports/pairwise.csv"
+pairwise_html_path = "reports/pairwise.html"
+dashboard_path = "reports/dashboard.html"
+dashboard_title = "Runner"
+build_dashboard = false
+
+[data]
+path = "data/rddt.csv"
+refresh = false
+symbol = "RDDT"
+start = ""
+end = ""
+
+[comparison]
+confidence_level = 0.95
+bootstrap_samples = 100
+permutation_samples = 100
+seed = 7
+title = "Pairwise"
+
+[[profiles]]
+name = "base"
+config = "{tmp_path / 'short-base.toml'}"
+
+[[profiles]]
+name = "candidate"
+config = "{tmp_path / 'short-candidate.toml'}"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    output_root = tmp_path / "logs" / "profile_matrix_daily"
+    matrix_config = tmp_path / "profile-matrix.toml"
+    matrix_config.write_text(
+        f"""
+symbols = ["AAPL", "RDDT"]
+
+[matrix]
+output_root = "{output_root}"
+build_dashboard = false
+
+[base_runner]
+config = "{tmp_path / 'profile-runner.toml'}"
+output_root_template = "symbols/{{symbol_lower}}"
+data_path_template = "{data_dir / '{symbol_lower}.csv'}"
+refresh = false
+start = ""
+end = ""
+build_symbol_dashboards = false
+
+[symbol_overrides.RDDT]
+config = "{short_runner_path}"
+
+[promotion]
+enabled = false
+""".strip(),
+        encoding="utf-8",
+    )
+
+    schedule_config = tmp_path / "profile-schedule.toml"
+    schedule_config.write_text(
+        f"""
+[schedule]
+matrix_config = "{matrix_config}"
+symbols = []
+health_snapshot_path = "reports/active_profile_health.csv"
+health_history_path = "reports/active_profile_health_history.csv"
+drift_alerts_csv_path = "reports/profile_drift_alerts.csv"
+drift_alerts_html_path = "reports/profile_drift_alerts.html"
+drift_alerts_history_path = "reports/profile_drift_alerts_history.csv"
+ticker_summary_csv_path = "reports/ticker_health_summary.csv"
+ticker_summary_html_path = "reports/ticker_health_summary.html"
+product_dashboard_path = "reports/product_dashboard.html"
+summary_json_path = "reports/profile_schedule_summary.json"
+
+[monitor]
+lookback_runs = 1
+max_gap_drop = 0.01
+max_rank_worsening = 0.5
+min_active_minus_base_gap = -0.01
+ensemble_low_confidence_threshold = 0.55
+""".strip(),
+        encoding="utf-8",
+    )
+
+    calls: list[dict[str, object]] = []
+
+    def fake_run_profile_schedule_config(
+        config,
+        *,
+        config_dir,
+        config_label,
+        run_timestamp_utc,
+        matrix_config_override,
+        matrix_config_dir,
+        matrix_config_label,
+    ):
+        _ = config, config_dir, config_label, matrix_config_dir, matrix_config_label
+        calls.append(
+            {
+                "run_timestamp_utc": run_timestamp_utc,
+                "symbols": list(matrix_config_override["symbols"]),
+            }
+        )
+        return {
+            "monitor_summary": {"run_timestamp_utc": run_timestamp_utc},
+            "summary_json_path": str(output_root / "reports" / "profile_schedule_summary.json"),
+            "product_dashboard_path": str(output_root / "reports" / "product_dashboard.html"),
+        }
+
+    monkeypatch.setattr(backfill_module, "run_profile_schedule_config", fake_run_profile_schedule_config)
+    summary = run_profile_backfill(schedule_config)
+
+    assert calls == [
+        {"run_timestamp_utc": "2026-01-05T00:00:00+00:00", "symbols": ["AAPL"]},
+        {"run_timestamp_utc": "2026-01-06T00:00:00+00:00", "symbols": ["AAPL"]},
+        {"run_timestamp_utc": "2026-01-07T00:00:00+00:00", "symbols": ["AAPL", "RDDT"]},
+    ]
+    assert summary["requested_symbols"] == ["AAPL", "RDDT"]
+    assert summary["symbols"] == ["AAPL", "RDDT"]
+    assert summary["skipped_symbols"] == []
+    assert summary["minimum_required_rows_by_symbol"] == {"AAPL": 5, "RDDT": 3}
+    assert summary["replay_runs"][-1]["symbols"] == ["AAPL", "RDDT"]

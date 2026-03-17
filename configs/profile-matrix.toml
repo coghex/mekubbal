@@ -21,6 +21,9 @@ start = ""
 end = ""
 build_symbol_dashboards = true
 
+[symbol_overrides.RDDT]
+config = "configs/profile-runner-daily-short-history.toml"
+
 [comparison]
 confidence_level = 0.95
 bootstrap_samples = 2000

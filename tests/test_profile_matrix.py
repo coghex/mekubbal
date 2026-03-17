@@ -511,3 +511,119 @@ pairwise_title = "Pairwise"
 
     per_symbol = pd.read_csv(summary["symbol_summary_path"])
     assert set(per_symbol["symbol"]) == {"AAPL"}
+
+
+def test_run_profile_matrix_applies_symbol_specific_runner_override(monkeypatch, tmp_path):
+    import mekubbal.profile_matrix as matrix_module
+
+    control = tmp_path / "control.toml"
+    short_control = tmp_path / "short-control.toml"
+    profile_runner = tmp_path / "profile-runner.toml"
+    short_runner = tmp_path / "profile-runner-short.toml"
+    matrix_config = tmp_path / "profile-matrix.toml"
+    control.write_text("[data]\npath='unused.csv'\n", encoding="utf-8")
+    short_control.write_text("[data]\npath='unused-short.csv'\n", encoding="utf-8")
+    profile_runner.write_text(
+        f"""
+[[profiles]]
+name = "base"
+config = "{control}"
+
+[[profiles]]
+name = "candidate"
+config = "{control}"
+""".strip(),
+        encoding="utf-8",
+    )
+    short_runner.write_text(
+        f"""
+[[profiles]]
+name = "base"
+config = "{short_control}"
+
+[[profiles]]
+name = "candidate"
+config = "{short_control}"
+""".strip(),
+        encoding="utf-8",
+    )
+    matrix_config.write_text(
+        f"""
+symbols = ["AAPL", "RDDT"]
+
+[matrix]
+output_root = "{tmp_path / "out"}"
+build_dashboard = false
+
+[base_runner]
+config = "{profile_runner}"
+output_root_template = "symbols/{{symbol_lower}}"
+data_path_template = "data/{{symbol_lower}}.csv"
+refresh = false
+start = ""
+end = ""
+build_symbol_dashboards = false
+
+[symbol_overrides.RDDT]
+config = "{short_runner}"
+
+[comparison]
+confidence_level = 0.9
+bootstrap_samples = 300
+permutation_samples = 1000
+seed = 11
+aggregate_title = "Aggregate"
+pairwise_title = "Pairwise"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    profile_config_paths: dict[str, str] = {}
+
+    def fake_run_profile_runner_config(config, *, config_dir, config_label):
+        _ = config_dir, config_label
+        symbol = str(config["data"]["symbol"]).upper()
+        profile_config_paths[symbol] = str(config["profiles"][0]["config"])
+        out_root = Path(config["runner"]["output_root"])
+        out_root.mkdir(parents=True, exist_ok=True)
+        pairwise_csv = out_root / "pairwise.csv"
+        pairwise_html = out_root / "pairwise.html"
+        pd.DataFrame(
+            {
+                "profile_a": ["base"],
+                "profile_b": ["candidate"],
+                "p_value_two_sided": [0.5],
+            }
+        ).to_csv(pairwise_csv, index=False)
+        pairwise_html.write_text("<html>pairwise</html>", encoding="utf-8")
+        return {
+            "pairwise_summary": {
+                "output_csv_path": str(pairwise_csv),
+                "output_html_path": str(pairwise_html),
+            },
+            "dashboard_path": None,
+            "profiles": [
+                {
+                    "profile": "base",
+                    "profile_slug": "base",
+                    "walkforward_report_path": str(out_root / "walk_base.csv"),
+                    "visual_report_path": str(out_root / "base.html"),
+                    "walkforward_avg_policy_final_equity": 1.02,
+                    "walkforward_avg_buy_and_hold_equity": 1.0,
+                },
+                {
+                    "profile": "candidate",
+                    "profile_slug": "candidate",
+                    "walkforward_report_path": str(out_root / "walk_candidate.csv"),
+                    "visual_report_path": str(out_root / "candidate.html"),
+                    "walkforward_avg_policy_final_equity": 1.03,
+                    "walkforward_avg_buy_and_hold_equity": 1.0,
+                },
+            ],
+        }
+
+    monkeypatch.setattr(matrix_module, "run_profile_runner_config", fake_run_profile_runner_config)
+
+    run_profile_matrix(matrix_config)
+    assert profile_config_paths["AAPL"].endswith("control.toml")
+    assert profile_config_paths["RDDT"].endswith("short-control.toml")

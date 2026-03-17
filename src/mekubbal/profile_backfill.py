@@ -12,6 +12,7 @@ import pandas as pd
 from mekubbal.control import load_control_config
 from mekubbal.data import load_ohlcv_csv
 from mekubbal.profile_matrix import (
+    _base_runner_settings,
     _resolve_existing_path,
     _resolve_path,
     _templated_path,
@@ -50,11 +51,9 @@ def _required_rows_for_control(control_config: dict[str, Any]) -> int:
     return required_rows
 
 
-def _minimum_required_rows(matrix_config: dict[str, Any], *, matrix_config_dir: Path) -> int:
-    base_runner = matrix_config["base_runner"]
-    base_runner_config_path = _resolve_existing_path(matrix_config_dir, str(base_runner["config"]))
-    runner_config = load_profile_runner_config(base_runner_config_path)
-    runner_config_dir = base_runner_config_path.parent
+def _required_rows_for_runner_config(runner_config_path: Path) -> int:
+    runner_config = load_profile_runner_config(runner_config_path)
+    runner_config_dir = runner_config_path.parent
 
     required_rows = 1
     for profile in runner_config["profiles"]:
@@ -64,26 +63,37 @@ def _minimum_required_rows(matrix_config: dict[str, Any], *, matrix_config_dir: 
     return required_rows
 
 
-def _source_data_paths(
+def _symbol_backfill_settings(
     matrix_config: dict[str, Any],
     *,
     matrix_config_dir: Path,
     symbols: list[str],
-) -> dict[str, Path]:
-    base_runner = matrix_config["base_runner"]
-    base_runner_config_path = _resolve_existing_path(matrix_config_dir, str(base_runner["config"]))
-    base_runner_dir = base_runner_config_path.parent
-    data_template = str(base_runner["data_path_template"])
-    return {
-        symbol: _resolve_existing_path(base_runner_dir, _templated_path(data_template, symbol))
-        for symbol in symbols
-    }
+) -> dict[str, dict[str, Any]]:
+    required_rows_cache: dict[Path, int] = {}
+    settings: dict[str, dict[str, Any]] = {}
+    for symbol in symbols:
+        base_runner = _base_runner_settings(matrix_config, symbol)
+        runner_config_path = _resolve_existing_path(matrix_config_dir, str(base_runner["config"]))
+        if runner_config_path not in required_rows_cache:
+            required_rows_cache[runner_config_path] = _required_rows_for_runner_config(runner_config_path)
+        base_runner_dir = runner_config_path.parent
+        data_path = _resolve_existing_path(
+            base_runner_dir,
+            _templated_path(str(base_runner["data_path_template"]), symbol),
+        )
+        settings[symbol] = {
+            "base_runner": base_runner,
+            "runner_config_path": runner_config_path,
+            "data_path": data_path,
+            "required_rows": required_rows_cache[runner_config_path],
+        }
+    return settings
 
 
 def _candidate_replay_dates(
     frames: dict[str, pd.DataFrame],
     *,
-    minimum_required_rows: int,
+    required_rows_by_symbol: dict[str, int],
     start_date: str | None,
     end_date: str | None,
     every: int,
@@ -100,19 +110,28 @@ def _candidate_replay_dates(
         ordered["date"] = pd.to_datetime(ordered["date"]).dt.normalize()
         normalized_frames[symbol] = ordered
 
-    common_dates: set[pd.Timestamp] | None = None
+    all_dates: set[pd.Timestamp] = set()
+    first_eligible_dates: dict[str, pd.Timestamp] = {}
     for frame in normalized_frames.values():
-        symbol_dates = set(frame["date"].tolist())
-        common_dates = symbol_dates if common_dates is None else common_dates & symbol_dates
-    if not common_dates:
-        raise ValueError("No common replay dates exist across the selected symbols.")
+        all_dates.update(frame["date"].tolist())
+    if not all_dates:
+        raise ValueError("No replay dates exist across the selected symbols.")
 
-    earliest_eligible = max(frame.iloc[minimum_required_rows - 1]["date"] for frame in normalized_frames.values())
+    for symbol, frame in normalized_frames.items():
+        required_rows = int(required_rows_by_symbol[symbol])
+        first_eligible_dates[symbol] = frame.iloc[required_rows - 1]["date"]
+
+    earliest_eligible = min(first_eligible_dates.values())
     start_ts = pd.Timestamp(start_date).normalize() if start_date else earliest_eligible
-    end_ts = pd.Timestamp(end_date).normalize() if end_date else max(common_dates)
+    end_ts = pd.Timestamp(end_date).normalize() if end_date else max(all_dates)
     effective_start = max(earliest_eligible, start_ts)
 
-    candidate_dates = sorted(date for date in common_dates if effective_start <= date <= end_ts)
+    candidate_dates = sorted(
+        date
+        for date in all_dates
+        if effective_start <= date <= end_ts
+        and any(first_eligible_dates[symbol] <= date for symbol in normalized_frames)
+    )
     candidate_dates = candidate_dates[::every]
     if max_runs is not None:
         candidate_dates = candidate_dates[-max_runs:]
@@ -124,21 +143,22 @@ def _candidate_replay_dates(
 def _partition_frames_by_history(
     frames: dict[str, pd.DataFrame],
     *,
-    minimum_required_rows: int,
+    required_rows_by_symbol: dict[str, int],
 ) -> tuple[dict[str, pd.DataFrame], list[dict[str, Any]]]:
     eligible_frames: dict[str, pd.DataFrame] = {}
     skipped_symbols: list[dict[str, Any]] = []
     for symbol, frame in frames.items():
         row_count = int(len(frame))
-        if row_count < minimum_required_rows:
+        required_rows = int(required_rows_by_symbol[symbol])
+        if row_count < required_rows:
             skipped_symbols.append(
                 {
                     "symbol": symbol,
                     "available_rows": row_count,
-                    "required_rows": int(minimum_required_rows),
+                    "required_rows": required_rows,
                     "reason": (
                         f"{symbol} only has {row_count} rows, but backfill requires at least "
-                        f"{minimum_required_rows} rows per ticker."
+                        f"{required_rows} rows per ticker."
                     ),
                 }
             )
@@ -148,9 +168,24 @@ def _partition_frames_by_history(
         details = ", ".join(f"{row['symbol']}={row['available_rows']}" for row in skipped_symbols) or "none"
         raise ValueError(
             "No symbols have enough history for backfill. "
-            f"Required rows per ticker: {minimum_required_rows}. Available: {details}."
+            f"Required rows per ticker: {required_rows_by_symbol}. Available: {details}."
         )
     return eligible_frames, skipped_symbols
+
+
+def _active_symbols_for_replay_date(
+    frames: dict[str, pd.DataFrame],
+    *,
+    required_rows_by_symbol: dict[str, int],
+    replay_date: pd.Timestamp,
+) -> list[str]:
+    active_symbols: list[str] = []
+    for symbol, frame in frames.items():
+        normalized_dates = pd.to_datetime(frame["date"]).dt.normalize()
+        available_rows = int((normalized_dates <= replay_date).sum())
+        if available_rows >= int(required_rows_by_symbol[symbol]):
+            active_symbols.append(symbol)
+    return active_symbols
 
 
 def _timestamp_for_replay_date(replay_date: pd.Timestamp) -> str:
@@ -176,23 +211,26 @@ def run_profile_backfill(
     matrix_config_dir = matrix_config_path.parent.resolve()
     symbols = _active_symbols(schedule_config, matrix_config)
 
-    source_data_paths = _source_data_paths(
+    symbol_settings = _symbol_backfill_settings(
         matrix_config,
         matrix_config_dir=matrix_config_dir,
         symbols=symbols,
     )
+    source_data_paths = {symbol: Path(settings["data_path"]) for symbol, settings in symbol_settings.items()}
     source_frames = {symbol: load_ohlcv_csv(path) for symbol, path in source_data_paths.items()}
-    minimum_required_rows = _minimum_required_rows(
-        matrix_config,
-        matrix_config_dir=matrix_config_dir,
-    )
+    required_rows_by_symbol = {
+        symbol: int(settings["required_rows"]) for symbol, settings in symbol_settings.items()
+    }
     eligible_frames, skipped_symbols = _partition_frames_by_history(
         source_frames,
-        minimum_required_rows=minimum_required_rows,
+        required_rows_by_symbol=required_rows_by_symbol,
     )
+    eligible_required_rows_by_symbol = {
+        symbol: required_rows_by_symbol[symbol] for symbol in eligible_frames
+    }
     replay_dates = _candidate_replay_dates(
         eligible_frames,
-        minimum_required_rows=minimum_required_rows,
+        required_rows_by_symbol=eligible_required_rows_by_symbol,
         start_date=start_date,
         end_date=end_date,
         every=every,
@@ -210,10 +248,19 @@ def run_profile_backfill(
         temp_data_dir.mkdir(parents=True, exist_ok=True)
 
         matrix_override = deepcopy(matrix_config)
-        matrix_override["symbols"] = list(eligible_frames.keys())
         matrix_override["base_runner"]["data_path_template"] = str(temp_data_dir / "{symbol_lower}.csv")
+        for override in matrix_override.get("symbol_overrides", {}).values():
+            override["data_path_template"] = str(temp_data_dir / "{symbol_lower}.csv")
 
         for replay_date in replay_dates:
+            active_symbols = _active_symbols_for_replay_date(
+                eligible_frames,
+                required_rows_by_symbol=eligible_required_rows_by_symbol,
+                replay_date=replay_date,
+            )
+            if not active_symbols:
+                continue
+            matrix_override["symbols"] = active_symbols
             for symbol, frame in eligible_frames.items():
                 snapshot = frame[pd.to_datetime(frame["date"]).dt.normalize() <= replay_date].copy()
                 snapshot.to_csv(temp_data_dir / f"{symbol.lower()}.csv", index=False)
@@ -230,6 +277,7 @@ def run_profile_backfill(
             replay_runs.append(
                 {
                     "replay_date": replay_date.date().isoformat(),
+                    "symbols": list(active_symbols),
                     "run_timestamp_utc": str(run_summary["monitor_summary"]["run_timestamp_utc"]),
                     "summary_json_path": str(run_summary["summary_json_path"]),
                     "product_dashboard_path": str(run_summary["product_dashboard_path"]),
@@ -244,7 +292,8 @@ def run_profile_backfill(
         "symbols": list(eligible_frames.keys()),
         "skipped_symbols": skipped_symbols,
         "source_data_paths": {symbol: str(path) for symbol, path in source_data_paths.items()},
-        "minimum_required_rows": int(minimum_required_rows),
+        "minimum_required_rows": int(max(eligible_required_rows_by_symbol.values())),
+        "minimum_required_rows_by_symbol": required_rows_by_symbol,
         "requested_start_date": start_date,
         "requested_end_date": end_date,
         "every": int(every),

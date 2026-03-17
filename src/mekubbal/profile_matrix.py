@@ -58,6 +58,7 @@ def _default_profile_matrix_config() -> dict[str, Any]:
             "prefer_previous_active": True,
             "fallback_profile": "base",
         },
+        "symbol_overrides": {},
         "symbols": [],
     }
 
@@ -108,6 +109,43 @@ def _parse_symbols(values: list[Any]) -> list[str]:
     return symbols
 
 
+def _normalize_symbol_overrides(raw_overrides: Any) -> dict[str, dict[str, Any]]:
+    if raw_overrides is None:
+        return {}
+    if not isinstance(raw_overrides, dict):
+        raise ValueError("symbol_overrides must be a TOML table when provided.")
+
+    allowed_keys = {
+        "config",
+        "output_root_template",
+        "data_path_template",
+        "refresh",
+        "start",
+        "end",
+        "build_symbol_dashboards",
+    }
+    normalized: dict[str, dict[str, Any]] = {}
+    for raw_symbol, raw_override in raw_overrides.items():
+        symbol = str(raw_symbol).strip().upper()
+        if not symbol:
+            raise ValueError("symbol_overrides keys must be non-empty ticker symbols.")
+        if not isinstance(raw_override, dict):
+            raise ValueError(f"symbol_overrides.{symbol} must be a TOML table.")
+        unknown_keys = sorted(set(raw_override) - allowed_keys)
+        if unknown_keys:
+            raise ValueError(f"symbol_overrides.{symbol} contains unknown keys: {unknown_keys}")
+        normalized[symbol] = dict(raw_override)
+    return normalized
+
+
+def _base_runner_settings(config: dict[str, Any], symbol: str) -> dict[str, Any]:
+    settings = deepcopy(config["base_runner"])
+    override = config.get("symbol_overrides", {}).get(symbol.upper())
+    if override:
+        _deep_merge(settings, deepcopy(override))
+    return settings
+
+
 def _validate_profile_matrix_config(config: dict[str, Any], *, config_dir: Path) -> None:
     matrix = config["matrix"]
     base_runner = config["base_runner"]
@@ -115,6 +153,7 @@ def _validate_profile_matrix_config(config: dict[str, Any], *, config_dir: Path)
     promotion = config["promotion"]
     symbols = _parse_symbols(config["symbols"])
     config["symbols"] = symbols
+    config["symbol_overrides"] = _normalize_symbol_overrides(config.get("symbol_overrides"))
 
     if not matrix.get("output_root"):
         raise ValueError("matrix.output_root is required.")
@@ -139,6 +178,16 @@ def _validate_profile_matrix_config(config: dict[str, Any], *, config_dir: Path)
         raise ValueError("comparison.permutation_samples must be >= 100.")
     if int(promotion["max_candidate_rank"]) < 1:
         raise ValueError("promotion.max_candidate_rank must be >= 1.")
+
+    for symbol, override in config["symbol_overrides"].items():
+        effective_runner = _base_runner_settings(config, symbol)
+        override_config_path = _resolve_existing_path(config_dir, str(effective_runner["config"]))
+        if not override_config_path.exists():
+            raise FileNotFoundError(f"symbol_overrides.{symbol}.config does not exist: {override_config_path}")
+        if bool(effective_runner.get("refresh")):
+            missing = [key for key in ["start", "end"] if not str(effective_runner.get(key) or "").strip()]
+            if missing:
+                raise ValueError(f"symbol_overrides.{symbol}.refresh=true requires fields: {missing}")
 
 
 def load_profile_matrix_config(config_path: str | Path) -> dict[str, Any]:
@@ -369,7 +418,6 @@ def run_profile_matrix_config(
         _validate_profile_matrix_config(runtime_config, config_dir=config_dir_path)
 
     matrix_cfg = runtime_config["matrix"]
-    base_runner_cfg = runtime_config["base_runner"]
     comparison_cfg = runtime_config["comparison"]
     promotion_cfg = runtime_config["promotion"]
     symbols = list(runtime_config["symbols"])
@@ -379,9 +427,7 @@ def run_profile_matrix_config(
     reports_root = output_root / "reports"
     reports_root.mkdir(parents=True, exist_ok=True)
 
-    base_runner_config_path = _resolve_existing_path(config_dir_path, str(base_runner_cfg["config"]))
-    base_runner_config = load_profile_runner_config(base_runner_config_path)
-    base_runner_dir = base_runner_config_path.parent
+    runner_config_cache: dict[Path, dict[str, Any]] = {}
 
     symbol_rows: list[dict[str, Any]] = []
     ticker_reports: dict[str, str] = {}
@@ -391,17 +437,24 @@ def run_profile_matrix_config(
     skipped_symbols: list[dict[str, str]] = []
 
     for symbol in symbols:
+        effective_base_runner = _base_runner_settings(runtime_config, symbol)
+        base_runner_config_path = _resolve_existing_path(config_dir_path, str(effective_base_runner["config"]))
+        base_runner_config = runner_config_cache.get(base_runner_config_path)
+        if base_runner_config is None:
+            base_runner_config = load_profile_runner_config(base_runner_config_path)
+            runner_config_cache[base_runner_config_path] = base_runner_config
+        base_runner_dir = base_runner_config_path.parent
         symbol_runner = deepcopy(base_runner_config)
         symbol_runner["runner"]["output_root"] = str(
-            output_root / _templated_path(str(base_runner_cfg["output_root_template"]), symbol)
+            output_root / _templated_path(str(effective_base_runner["output_root_template"]), symbol)
         )
-        symbol_runner["runner"]["build_dashboard"] = bool(base_runner_cfg["build_symbol_dashboards"])
+        symbol_runner["runner"]["build_dashboard"] = bool(effective_base_runner["build_symbol_dashboards"])
         symbol_runner["runner"]["dashboard_title"] = f"{symbol} Profile Workspace"
-        symbol_runner["data"]["path"] = _templated_path(str(base_runner_cfg["data_path_template"]), symbol)
-        symbol_runner["data"]["refresh"] = bool(base_runner_cfg["refresh"])
+        symbol_runner["data"]["path"] = _templated_path(str(effective_base_runner["data_path_template"]), symbol)
+        symbol_runner["data"]["refresh"] = bool(effective_base_runner["refresh"])
         symbol_runner["data"]["symbol"] = symbol
-        symbol_runner["data"]["start"] = base_runner_cfg.get("start")
-        symbol_runner["data"]["end"] = base_runner_cfg.get("end")
+        symbol_runner["data"]["start"] = effective_base_runner.get("start")
+        symbol_runner["data"]["end"] = effective_base_runner.get("end")
         symbol_runner["comparison"]["title"] = f"{symbol} Profile Pairwise Significance"
 
         try:

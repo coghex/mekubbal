@@ -1,0 +1,9 @@
+[meta]
+extends = "research-control.daily-base.toml"
+config_version = 3
+profile = "daily-short-base"
+
+[walkforward]
+train_window = 252
+test_window = 63
+step_window = 63

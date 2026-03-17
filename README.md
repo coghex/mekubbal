@@ -139,6 +139,7 @@ mekubbal-profile-schedule --config configs/profile-schedule-daily.toml
 ```
 
 The daily ticker universe is driven by `configs/profile-matrix-daily.toml`, so adding symbols there updates both the daily run and the manual backfill workflow.
+If a newer ticker does not yet have enough rows for the standard daily windows, add a symbol-specific override there (for example `symbol_overrides.RDDT`) that points to a shorter-history runner config instead of weakening the older-ticker defaults.
 
 Rebuild the daily schedule history from raw ticker CSVs (useful after adding tickers or resetting report state):
 
