@@ -1653,16 +1653,16 @@ def render_product_dashboard(
   <style>
     :root {{
       color-scheme: light;
-      --bg: #f4f7fb;
+      --bg: #f3f4f6;
       --panel: #ffffff;
-      --panel-soft: #f8fbff;
-      --border: #d8e1ec;
+      --panel-soft: #f5f5f5;
+      --border: #e4e4e7;
       --text: #0f172a;
       --muted: #475569;
-      --nav: #0f172a;
-      --nav-soft: #1e293b;
-      --blue: #2563eb;
-      --blue-soft: #dbeafe;
+      --nav: #09090b;
+      --nav-soft: #18181b;
+      --blue: #111111;
+      --blue-soft: #f3f4f6;
       --green: #15803d;
       --green-soft: #dcfce7;
       --amber: #b45309;
@@ -1674,19 +1674,19 @@ def render_product_dashboard(
     * {{ box-sizing: border-box; }}
     body {{ margin: 0; font-family: Arial, sans-serif; color: var(--text); background: var(--bg); }}
     a {{ color: var(--blue); }}
-    .layout {{ display: grid; grid-template-columns: 92px 1fr; min-height: 100vh; }}
+    .layout {{ display: grid; grid-template-columns: 72px minmax(0, 1fr); min-height: 100vh; }}
     .side {{
-      background: #0b1220;
-      color: #dbe7f5;
-      padding: 12px 10px;
+      background: #09090b;
+      color: #f4f4f5;
+      padding: 10px 6px;
       border-right: 1px solid rgba(148, 163, 184, 0.12);
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 8px;
       min-height: 100vh;
     }}
-    .ticker-rail {{ display: grid; gap: 6px; align-content: start; overflow: auto; }}
-    .rail-bottom {{ margin-top: auto; padding-top: 10px; }}
+    .ticker-rail {{ display: flex; flex-direction: column; align-items: center; gap: 6px; overflow: auto; }}
+    .rail-bottom {{ margin-top: auto; padding-top: 8px; display: flex; justify-content: center; }}
     .brand {{ font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }}
     .brand-copy {{ margin-top: 8px; font-size: 13px; line-height: 1.5; color: #cbd5e1; }}
     .nav-section {{ margin-top: 18px; }}
@@ -1699,26 +1699,28 @@ def render_product_dashboard(
       color: #94a3b8;
     }}
     .nav-button {{
-      width: 100%;
+      width: auto;
+      min-width: 52px;
       text-align: center;
-      padding: 12px 8px;
-      border: 1px solid rgba(148, 163, 184, 0.1);
-      border-radius: 10px;
+      padding: 10px 10px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
       margin: 0;
       cursor: pointer;
-      color: #cbd5e1;
-      background: rgba(15, 23, 42, 0.92);
+      color: #e4e4e7;
+      background: #111111;
       font-weight: 700;
       letter-spacing: 0.06em;
-      font-size: 12px;
+      font-size: 11px;
+      line-height: 1;
     }}
     .nav-button.active {{
-      background: #eff6ff;
-      color: #0f172a;
-      border-color: #bfdbfe;
-      box-shadow: inset 3px 0 0 #2563eb;
+      background: #fafafa;
+      color: #111111;
+      border-color: #d4d4d8;
+      box-shadow: none;
     }}
-    .main {{ padding: 18px; overflow: auto; }}
+    .main {{ padding: 18px; overflow: auto; min-width: 0; }}
     .panel {{ display: none; }}
     .panel.active {{ display: block; }}
     .workspace-head {{
@@ -1989,11 +1991,11 @@ def render_product_dashboard(
     .metric-strip .item-label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; }}
     .metric-strip .item-value {{ margin-top: 5px; font-size: 18px; font-weight: 700; }}
     .ticker-card-copy, .body-copy {{ margin: 0; color: var(--muted); line-height: 1.6; }}
-    .ticker-card-signal {{ margin: 0; color: #1e3a8a; font-weight: 700; line-height: 1.5; }}
+    .ticker-card-signal {{ margin: 0; color: #111111; font-weight: 700; line-height: 1.5; }}
     .watch-box {{
-      background: #f8fbff;
-      border: 1px solid #dbeafe;
-      color: #1e3a8a;
+      background: #f5f5f5;
+      border: 1px solid #e4e4e7;
+      color: #111111;
       border-radius: 14px;
       padding: 12px;
       font-size: 13px;
@@ -2012,11 +2014,11 @@ def render_product_dashboard(
     }}
     .primary-button {{ border: 1px solid var(--blue); background: var(--blue); color: #fff; }}
     .ghost-button {{ border: 1px solid var(--border); background: #fff; color: var(--text); }}
-    .link-button {{ border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8; }}
+    .link-button {{ border: 1px solid #d4d4d8; background: #f5f5f5; color: #111111; }}
     .ticker-toolbar {{ display: block; margin-bottom: 0; }}
     .ticker-title {{ font-size: 32px; font-weight: 700; letter-spacing: -0.03em; margin: 8px 0 0 0; }}
     .ticker-subtitle {{ margin: 8px 0 0 0; max-width: 760px; line-height: 1.6; color: var(--muted); }}
-    .signal-subtitle {{ margin: 10px 0 0 0; color: #1e3a8a; font-weight: 700; line-height: 1.5; }}
+    .signal-subtitle {{ margin: 10px 0 0 0; color: #111111; font-weight: 700; line-height: 1.5; }}
     .detail-grid {{
       display: grid;
       grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
@@ -2028,7 +2030,7 @@ def render_product_dashboard(
     table {{ width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }}
     th, td {{ border: 1px solid #e5edf7; padding: 8px 10px; text-align: left; font-size: 13px; }}
     th {{ background: #f8fafc; }}
-    .report-list a {{ display: block; margin-top: 8px; color: var(--blue); text-decoration: none; }}
+    .report-list a {{ display: block; margin-top: 8px; color: #111111; text-decoration: none; }}
     .preview {{ margin-top: 12px; }}
     .preview iframe {{ width: 100%; height: 420px; border: 1px solid var(--border); border-radius: 14px; }}
     .select-input {{
@@ -2053,12 +2055,10 @@ def render_product_dashboard(
     .delta-item .v {{ margin-top: 6px; font-size: 15px; font-weight: 700; line-height: 1.4; }}
     #system-svg {{ width: 100%; height: 420px; background: #0b1220; border-radius: 18px; box-shadow: var(--shadow); }}
     .system-links {{ display: grid; gap: 8px; }}
-    .system-links a {{ color: var(--blue); text-decoration: none; }}
+    .system-links a {{ color: #111111; text-decoration: none; }}
     .footnote {{ margin-top: 20px; font-size: 12px; color: #64748b; line-height: 1.6; }}
-    @media (max-width: 1100px) {{
-      .layout {{ grid-template-columns: 1fr; }}
-      .side {{ border-right: none; border-bottom: 1px solid rgba(148, 163, 184, 0.15); }}
-      .ticker-rail {{ grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); }}
+    @media (max-width: 700px) {{
+      .layout {{ grid-template-columns: 64px minmax(0, 1fr); }}
       .hero, .ticker-toolbar, .section-head {{ flex-direction: column; }}
       .summary-grid, .detail-metrics, .system-grid, .detail-grid, .delta-grid, .workspace-head, .workspace-grid, .workspace-grid-compact, .workspace-grid-triple {{ grid-template-columns: 1fr; }}
     }}
@@ -2524,7 +2524,7 @@ def render_product_dashboard(
         const x = pad + index * slot + (slot - barWidth) / 2;
         const height = (Math.abs(row.value) / maxAbs) * (canvas.height / 2 - pad - 18);
         const y = row.value >= 0 ? zeroY - height : zeroY;
-        ctx.fillStyle = row.value >= 0 ? '#2563eb' : '#dc2626';
+        ctx.fillStyle = row.value >= 0 ? '#111111' : '#71717a';
         ctx.fillRect(x, y, barWidth, height);
         ctx.fillStyle = '#475569';
         ctx.font = '11px Arial';
@@ -2664,7 +2664,7 @@ def render_product_dashboard(
           ? [
               {{
                 label: 'active edge',
-                color: '#2563eb',
+                color: '#111111',
                 points: (leader.history || []).map((item) => item.active_gap),
               }},
               {{
@@ -2692,7 +2692,7 @@ def render_product_dashboard(
       hub.setAttribute('cx', centerX.toString());
       hub.setAttribute('cy', centerY.toString());
       hub.setAttribute('r', '34');
-      hub.setAttribute('fill', '#1d4ed8');
+      hub.setAttribute('fill', '#111111');
       svg.appendChild(hub);
 
       const hubLabel = document.createElementNS(ns, 'text');
@@ -3036,7 +3036,7 @@ def render_product_dashboard(
         [
           {{
             label: 'active edge',
-            color: '#2563eb',
+            color: '#111111',
             points: (data.history || []).map((item) => item.active_gap),
           }},
           {{
