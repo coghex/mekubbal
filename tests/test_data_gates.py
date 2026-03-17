@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from mekubbal.data import load_ohlcv_csv, save_ohlcv_csv
+from mekubbal.data import download_ohlcv, load_ohlcv_csv, save_ohlcv_csv
 
 
 def _sample_ohlcv(rows: int = 180) -> pd.DataFrame:
@@ -62,3 +62,26 @@ def test_load_ohlcv_csv_warns_on_large_return_outliers(tmp_path):
         loaded = load_ohlcv_csv(path)
     assert len(loaded) == len(data)
 
+
+def test_download_ohlcv_normalizes_inconsistent_vendor_candles(monkeypatch):
+    raw = pd.DataFrame(
+        {
+            "Open": [100.0, 101.5],
+            "High": [101.0, 101.0],
+            "Low": [99.0, 100.0],
+            "Close": [100.5, 100.0],
+            "Volume": [1_000_000, 1_200_000],
+        },
+        index=pd.to_datetime(["2024-01-02", "2024-01-03"]),
+    )
+
+    def _fake_download(*args, **kwargs):
+        return raw
+
+    monkeypatch.setattr("mekubbal.data.yf.download", _fake_download)
+
+    with pytest.warns(UserWarning, match="inconsistent OHLC ranges"):
+        downloaded = download_ohlcv("TSM", "2024-01-01", "2024-01-04")
+
+    assert downloaded.loc[1, "high"] == pytest.approx(101.5)
+    assert downloaded.loc[1, "low"] == pytest.approx(100.0)

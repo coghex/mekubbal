@@ -10,6 +10,26 @@ REQUIRED_COLUMNS = ["date", "open", "high", "low", "close", "volume"]
 OUTLIER_RETURN_THRESHOLD = 0.2
 
 
+def normalize_downloaded_candle_ranges(data: pd.DataFrame, source_name: str) -> pd.DataFrame:
+    normalized = data.copy()
+    price_columns = ["open", "high", "low", "close"]
+    row_high = normalized[price_columns].max(axis=1)
+    row_low = normalized[price_columns].min(axis=1)
+    adjusted_rows = (normalized["high"] != row_high) | (normalized["low"] != row_low)
+    if adjusted_rows.any():
+        normalized.loc[:, "high"] = row_high
+        normalized.loc[:, "low"] = row_low
+        warnings.warn(
+            (
+                f"{source_name} contained {int(adjusted_rows.sum())} rows with inconsistent OHLC "
+                "ranges; high/low were normalized to match the row extrema."
+            ),
+            UserWarning,
+            stacklevel=2,
+        )
+    return normalized
+
+
 def validate_ohlcv_frame(data: pd.DataFrame, source_name: str) -> pd.DataFrame:
     missing = {column for column in REQUIRED_COLUMNS if column not in data.columns}
     if missing:
@@ -89,6 +109,7 @@ def download_ohlcv(symbol: str, start: str, end: str) -> pd.DataFrame:
 
     df = df[["open", "high", "low", "close", "volume"]].dropna().reset_index()
     df = df.rename(columns={"Date": "date", "index": "date"})
+    df = normalize_downloaded_candle_ranges(df, source_name=f"downloaded data for {symbol}")
     return validate_ohlcv_frame(df, source_name=f"downloaded data for {symbol}")
 
 
