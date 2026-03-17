@@ -98,11 +98,6 @@ def _candidate_replay_dates(
     for symbol, frame in frames.items():
         ordered = frame.sort_values("date").reset_index(drop=True).copy()
         ordered["date"] = pd.to_datetime(ordered["date"]).dt.normalize()
-        if len(ordered) < minimum_required_rows:
-            raise ValueError(
-                f"{symbol} only has {len(ordered)} rows, but backfill requires at least "
-                f"{minimum_required_rows} rows per ticker."
-            )
         normalized_frames[symbol] = ordered
 
     common_dates: set[pd.Timestamp] | None = None
@@ -124,6 +119,38 @@ def _candidate_replay_dates(
     if not candidate_dates:
         raise ValueError("No replay dates remain after applying the date filters and cadence.")
     return candidate_dates
+
+
+def _partition_frames_by_history(
+    frames: dict[str, pd.DataFrame],
+    *,
+    minimum_required_rows: int,
+) -> tuple[dict[str, pd.DataFrame], list[dict[str, Any]]]:
+    eligible_frames: dict[str, pd.DataFrame] = {}
+    skipped_symbols: list[dict[str, Any]] = []
+    for symbol, frame in frames.items():
+        row_count = int(len(frame))
+        if row_count < minimum_required_rows:
+            skipped_symbols.append(
+                {
+                    "symbol": symbol,
+                    "available_rows": row_count,
+                    "required_rows": int(minimum_required_rows),
+                    "reason": (
+                        f"{symbol} only has {row_count} rows, but backfill requires at least "
+                        f"{minimum_required_rows} rows per ticker."
+                    ),
+                }
+            )
+            continue
+        eligible_frames[symbol] = frame
+    if not eligible_frames:
+        details = ", ".join(f"{row['symbol']}={row['available_rows']}" for row in skipped_symbols) or "none"
+        raise ValueError(
+            "No symbols have enough history for backfill. "
+            f"Required rows per ticker: {minimum_required_rows}. Available: {details}."
+        )
+    return eligible_frames, skipped_symbols
 
 
 def _timestamp_for_replay_date(replay_date: pd.Timestamp) -> str:
@@ -159,8 +186,12 @@ def run_profile_backfill(
         matrix_config,
         matrix_config_dir=matrix_config_dir,
     )
-    replay_dates = _candidate_replay_dates(
+    eligible_frames, skipped_symbols = _partition_frames_by_history(
         source_frames,
+        minimum_required_rows=minimum_required_rows,
+    )
+    replay_dates = _candidate_replay_dates(
+        eligible_frames,
         minimum_required_rows=minimum_required_rows,
         start_date=start_date,
         end_date=end_date,
@@ -179,10 +210,11 @@ def run_profile_backfill(
         temp_data_dir.mkdir(parents=True, exist_ok=True)
 
         matrix_override = deepcopy(matrix_config)
+        matrix_override["symbols"] = list(eligible_frames.keys())
         matrix_override["base_runner"]["data_path_template"] = str(temp_data_dir / "{symbol_lower}.csv")
 
         for replay_date in replay_dates:
-            for symbol, frame in source_frames.items():
+            for symbol, frame in eligible_frames.items():
                 snapshot = frame[pd.to_datetime(frame["date"]).dt.normalize() <= replay_date].copy()
                 snapshot.to_csv(temp_data_dir / f"{symbol.lower()}.csv", index=False)
 
@@ -208,7 +240,9 @@ def run_profile_backfill(
         "config_path": str(schedule_config_path),
         "matrix_config_path": str(matrix_config_path),
         "output_root": str(output_root),
-        "symbols": symbols,
+        "requested_symbols": symbols,
+        "symbols": list(eligible_frames.keys()),
+        "skipped_symbols": skipped_symbols,
         "source_data_paths": {symbol: str(path) for symbol, path in source_data_paths.items()},
         "minimum_required_rows": int(minimum_required_rows),
         "requested_start_date": start_date,

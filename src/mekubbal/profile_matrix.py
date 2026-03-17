@@ -297,6 +297,17 @@ def _pairwise_profile_rows(
     )
 
 
+def _is_insufficient_history_error(exc: ValueError) -> bool:
+    message = str(exc)
+    insufficient_markers = [
+        "Not enough rows after feature creation",
+        "No walk-forward folds available",
+        "No retraining runs were produced",
+        "TradingEnv requires at least 2 rows of data",
+    ]
+    return any(marker in message for marker in insufficient_markers)
+
+
 def _aggregate_profile_rows(symbol_profile_rows: pd.DataFrame, pairwise_rows: pd.DataFrame) -> pd.DataFrame:
     grouped = (
         symbol_profile_rows.groupby("profile", as_index=False)
@@ -377,6 +388,7 @@ def run_profile_matrix_config(
     leaderboard_reports: dict[str, str] = {}
     profile_symbol_gaps: dict[str, dict[str, float]] = defaultdict(dict)
     symbol_pairwise_leaderboards: dict[str, str] = {}
+    skipped_symbols: list[dict[str, str]] = []
 
     for symbol in symbols:
         symbol_runner = deepcopy(base_runner_config)
@@ -392,11 +404,17 @@ def run_profile_matrix_config(
         symbol_runner["data"]["end"] = base_runner_cfg.get("end")
         symbol_runner["comparison"]["title"] = f"{symbol} Profile Pairwise Significance"
 
-        symbol_summary = run_profile_runner_config(
-            symbol_runner,
-            config_dir=base_runner_dir,
-            config_label=f"{base_runner_config_path}:{symbol}",
-        )
+        try:
+            symbol_summary = run_profile_runner_config(
+                symbol_runner,
+                config_dir=base_runner_dir,
+                config_label=f"{base_runner_config_path}:{symbol}",
+            )
+        except ValueError as exc:
+            if not _is_insufficient_history_error(exc):
+                raise
+            skipped_symbols.append({"symbol": symbol, "reason": str(exc)})
+            continue
 
         symbol_pairwise_html = str(symbol_summary["pairwise_summary"]["output_html_path"])
         symbol_pairwise_csv = str(symbol_summary["pairwise_summary"]["output_csv_path"])
@@ -446,6 +464,9 @@ def run_profile_matrix_config(
             )
 
     if not symbol_rows:
+        if skipped_symbols:
+            skipped_detail = ", ".join(f"{row['symbol']}: {row['reason']}" for row in skipped_symbols)
+            raise ValueError(f"No symbol profile results were generated. Skipped symbols: {skipped_detail}")
         raise ValueError("No symbol profile results were generated.")
     symbol_summary_frame = pd.DataFrame(symbol_rows).sort_values(["symbol", "symbol_rank", "profile"])
 
@@ -537,7 +558,8 @@ def run_profile_matrix_config(
     return {
         "config_path": str(config_label),
         "output_root": str(output_root),
-        "symbols_run": int(len(symbols)),
+        "symbols_requested": int(len(symbols)),
+        "symbols_run": int(symbol_summary_frame["symbol"].nunique()),
         "profile_count": int(len(profile_symbol_gaps)),
         "symbol_summary_path": str(symbol_summary_path),
         "profile_aggregate_csv_path": str(aggregate_csv_path),
@@ -546,6 +568,7 @@ def run_profile_matrix_config(
         "profile_pairwise_html_path": str(pairwise_html_path),
         "profile_selection": profile_selection,
         "dashboard_path": dashboard_path,
+        "skipped_symbols": skipped_symbols,
     }
 
 
