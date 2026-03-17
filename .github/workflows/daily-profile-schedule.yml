@@ -2,6 +2,9 @@ name: Daily Profile Schedule
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - master
   schedule:
     - cron: "17 6 * * *"
 
@@ -29,6 +32,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
 
       - name: Download daily symbol data
         run: |
