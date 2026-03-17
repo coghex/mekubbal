@@ -999,7 +999,7 @@ def render_product_dashboard(
     ticker_summary_csv_path: str | Path,
     health_history_path: str | Path,
     symbol_summary_path: str | Path,
-    title: str = "Mekubbal Market Pulse",
+    title: str = "Dashboard",
     global_report_paths: dict[str, str | Path] | None = None,
 ) -> Path:
     output = Path(output_path)
@@ -1618,7 +1618,13 @@ def render_product_dashboard(
                                         ).sum()
                                     )
 
-    tickers_sorted = sorted(ticker_payload)
+    tickers_sorted = [
+        str(item["symbol"]).upper()
+        for item in ranking_payload
+        if str(item.get("symbol", "")).strip()
+    ]
+    if not tickers_sorted:
+        tickers_sorted = sorted(ticker_payload)
     if not tickers_sorted:
         raise ValueError("No ticker rows found for product dashboard.")
     nav_buttons = "".join(
@@ -1668,13 +1674,19 @@ def render_product_dashboard(
     * {{ box-sizing: border-box; }}
     body {{ margin: 0; font-family: Arial, sans-serif; color: var(--text); background: var(--bg); }}
     a {{ color: var(--blue); }}
-    .layout {{ display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }}
+    .layout {{ display: grid; grid-template-columns: 92px 1fr; min-height: 100vh; }}
     .side {{
-      background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
-      color: #e2e8f0;
-      padding: 20px 16px;
-      border-right: 1px solid rgba(148, 163, 184, 0.15);
+      background: #0b1220;
+      color: #dbe7f5;
+      padding: 12px 10px;
+      border-right: 1px solid rgba(148, 163, 184, 0.12);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 100vh;
     }}
+    .ticker-rail {{ display: grid; gap: 6px; align-content: start; overflow: auto; }}
+    .rail-bottom {{ margin-top: auto; padding-top: 10px; }}
     .brand {{ font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }}
     .brand-copy {{ margin-top: 8px; font-size: 13px; line-height: 1.5; color: #cbd5e1; }}
     .nav-section {{ margin-top: 18px; }}
@@ -1688,20 +1700,151 @@ def render_product_dashboard(
     }}
     .nav-button {{
       width: 100%;
-      text-align: left;
-      padding: 10px 12px;
-      border: 1px solid rgba(148, 163, 184, 0.12);
-      border-radius: 12px;
-      margin-bottom: 8px;
+      text-align: center;
+      padding: 12px 8px;
+      border: 1px solid rgba(148, 163, 184, 0.1);
+      border-radius: 10px;
+      margin: 0;
       cursor: pointer;
-      color: #dbeafe;
-      background: rgba(30, 41, 59, 0.8);
-      font-weight: 600;
+      color: #cbd5e1;
+      background: rgba(15, 23, 42, 0.92);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      font-size: 12px;
     }}
-    .nav-button.active {{ background: var(--blue); color: #fff; border-color: rgba(255, 255, 255, 0.12); }}
-    .main {{ padding: 22px; overflow: auto; }}
+    .nav-button.active {{
+      background: #eff6ff;
+      color: #0f172a;
+      border-color: #bfdbfe;
+      box-shadow: inset 3px 0 0 #2563eb;
+    }}
+    .main {{ padding: 18px; overflow: auto; }}
     .panel {{ display: none; }}
     .panel.active {{ display: block; }}
+    .workspace-head {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }}
+    .stat-block {{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      box-shadow: var(--shadow);
+      min-height: 72px;
+    }}
+    .stat-block.wide {{ grid-column: span 2; }}
+    .stat-label {{
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #64748b;
+    }}
+    .stat-value {{
+      margin-top: 8px;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }}
+    .stat-copy {{ margin-top: 6px; font-size: 12px; line-height: 1.5; color: var(--muted); }}
+    .workspace-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }}
+    .workspace-grid-compact {{
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+      gap: 14px;
+      margin-top: 14px;
+    }}
+    .workspace-grid-triple {{
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(280px, 0.85fr);
+      gap: 14px;
+      margin-top: 14px;
+    }}
+    .section-title {{
+      margin: 0 0 12px 0;
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #475569;
+    }}
+    .canvas-block {{
+      width: 100%;
+      height: 280px;
+      display: block;
+      background: #fff;
+    }}
+    .canvas-block.compact {{ height: 230px; }}
+    .row-list {{
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }}
+    .row-item {{
+      display: grid;
+      gap: 4px;
+      padding: 10px 0;
+      border-top: 1px solid #e5edf7;
+    }}
+    .row-list > :first-child {{ border-top: none; padding-top: 0; }}
+    .row-item-main {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+      font-size: 14px;
+    }}
+    .row-item-main strong {{ font-size: 15px; letter-spacing: 0.03em; }}
+    .row-item-meta {{ color: #0f172a; font-weight: 700; white-space: nowrap; }}
+    .row-item-note {{ color: var(--muted); font-size: 13px; line-height: 1.5; }}
+    .row-item-button {{
+      width: 100%;
+      border: 0;
+      background: transparent;
+      padding: 0;
+      text-align: left;
+      cursor: pointer;
+      color: inherit;
+      font: inherit;
+    }}
+    .signal-list {{
+      display: grid;
+      gap: 12px;
+    }}
+    .signal-line {{
+      border-top: 1px solid #e5edf7;
+      padding-top: 10px;
+    }}
+    .signal-list > :first-child {{ border-top: none; padding-top: 0; }}
+    .signal-label {{
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #64748b;
+      margin-bottom: 4px;
+    }}
+    .signal-value {{ margin: 0; line-height: 1.6; color: var(--text); }}
+    .rail-note {{
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #64748b;
+      margin: 0 0 6px 0;
+      text-align: center;
+    }}
     .hero {{
       display: flex;
       justify-content: space-between;
@@ -1741,8 +1884,8 @@ def render_product_dashboard(
     .surface {{
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 18px;
-      padding: 18px;
+      border-radius: 12px;
+      padding: 14px;
       box-shadow: var(--shadow);
     }}
     .surface-soft {{ background: var(--panel-soft); }}
@@ -1822,8 +1965,8 @@ def render_product_dashboard(
     .badge {{
       display: inline-flex;
       align-items: center;
-      border-radius: 999px;
-      padding: 6px 10px;
+      border-radius: 6px;
+      padding: 5px 8px;
       font-size: 12px;
       font-weight: 700;
       border: 1px solid transparent;
@@ -1870,15 +2013,9 @@ def render_product_dashboard(
     .primary-button {{ border: 1px solid var(--blue); background: var(--blue); color: #fff; }}
     .ghost-button {{ border: 1px solid var(--border); background: #fff; color: var(--text); }}
     .link-button {{ border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8; }}
-    .ticker-toolbar {{
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: flex-start;
-      margin-bottom: 16px;
-    }}
+    .ticker-toolbar {{ display: block; margin-bottom: 0; }}
     .ticker-title {{ font-size: 32px; font-weight: 700; letter-spacing: -0.03em; margin: 8px 0 0 0; }}
-    .ticker-subtitle {{ margin: 10px 0 0 0; max-width: 760px; line-height: 1.6; color: var(--muted); }}
+    .ticker-subtitle {{ margin: 8px 0 0 0; max-width: 760px; line-height: 1.6; color: var(--muted); }}
     .signal-subtitle {{ margin: 10px 0 0 0; color: #1e3a8a; font-weight: 700; line-height: 1.5; }}
     .detail-grid {{
       display: grid;
@@ -1921,203 +2058,175 @@ def render_product_dashboard(
     @media (max-width: 1100px) {{
       .layout {{ grid-template-columns: 1fr; }}
       .side {{ border-right: none; border-bottom: 1px solid rgba(148, 163, 184, 0.15); }}
+      .ticker-rail {{ grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); }}
       .hero, .ticker-toolbar, .section-head {{ flex-direction: column; }}
-      .summary-grid, .detail-metrics, .system-grid, .detail-grid, .delta-grid {{ grid-template-columns: 1fr; }}
+      .summary-grid, .detail-metrics, .system-grid, .detail-grid, .delta-grid, .workspace-head, .workspace-grid, .workspace-grid-compact, .workspace-grid-triple {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
-<body>
+  <body>
   <div class="layout">
     <aside class="side">
-      <div class="brand">{html.escape(title)}</div>
-      <div class="brand-copy">Plain-language view of the daily RL pipeline. Start with the shortlist, then open a ticker for details or the system view for diagnostics.</div>
-      <div class="nav-section">
-        <div class="nav-label">Views</div>
-        <button id="nav-overview" class="nav-button active" onclick="showOverview()">Overview</button>
-        <button id="nav-system" class="nav-button" onclick="showSystem()">SYSTEM</button>
-      </div>
-      <div class="nav-section">
-        <div class="nav-label">Tickers</div>
+      <button id="nav-overview" class="nav-button active" onclick="showOverview()">ALL</button>
+      <div class="ticker-rail">
         {nav_buttons}
+      </div>
+      <div class="rail-bottom">
+        <button id="nav-system" class="nav-button" onclick="showSystem()">SYS</button>
       </div>
     </aside>
     <main class="main">
       <section id="overview-panel" class="panel active">
-        <div class="hero">
-          <div>
-            <div class="eyebrow">Daily market view</div>
-            <h1>Today's ticker shortlist</h1>
-            <p class="hero-copy">This page translates the research pipeline into a simple working view: which names look strongest right now, which need caution, and what you should watch on the next daily update.</p>
+        <div class="workspace-head">
+          <div class="stat-block">
+            <span class="stat-label">Updated</span>
+            <div id="overview-run-label" class="stat-value">{html.escape(latest_health_run or "n/a")}</div>
           </div>
-          <div class="hero-meta">
-            <strong>Latest run</strong>
-            <div id="overview-run-label">{html.escape(latest_health_run or "n/a")}</div>
-            <strong style="margin-top:10px;">How to use this</strong>
-            <div>Start with the top cards. Open a ticker to see the full explanation, recent trend, and linked deep-dive reports.</div>
+          <div class="stat-block">
+            <span class="stat-label">Leader</span>
+            <div id="overview-leader" class="stat-value">n/a</div>
           </div>
-        </div>
-        <div class="summary-grid">
-          <div class="surface">
-            <div class="kicker">Bullish setups</div>
-            <div id="overview-shortlist-count" class="metric-value">0</div>
-            <div class="metric-sub">Tickers with the clearest positive edge today.</div>
+          <div class="stat-block">
+            <span class="stat-label">Bullish</span>
+            <div id="overview-shortlist-count" class="stat-value">0</div>
           </div>
-          <div class="surface">
-            <div class="kicker">Healthy setups</div>
-            <div id="overview-healthy-count" class="metric-value">0</div>
-            <div class="metric-sub">Tickers without active drift warnings.</div>
+          <div class="stat-block">
+            <span class="stat-label">Avoid</span>
+            <div id="overview-holdoff-count" class="stat-value">0</div>
           </div>
-          <div class="surface">
-            <div class="kicker">Avoid for now</div>
-            <div id="overview-holdoff-count" class="metric-value">0</div>
-            <div class="metric-sub">Tickers where the current edge is weak or warning flags are active.</div>
+          <div class="stat-block wide">
+            <span class="stat-label">Lead note</span>
+            <div id="overview-leader-copy" class="stat-copy">Waiting for ranked ticker data.</div>
           </div>
-          <div class="surface">
-            <div class="kicker">Current leader</div>
-            <div id="overview-leader" class="metric-value">n/a</div>
-            <div id="overview-leader-copy" class="metric-sub">Waiting for ranked ticker data.</div>
+          <div class="stat-block">
+            <span class="stat-label">Healthy</span>
+            <div id="overview-healthy-count" class="stat-value">0</div>
           </div>
         </div>
-        <div class="section-head">
-          <div>
-            <h3>Ranked ticker cards</h3>
-            <p>Each card summarizes what the model is seeing, why it matters, and what to watch next.</p>
+        <div class="workspace-grid">
+          <div class="surface">
+            <h2 class="section-title">Relative Strength</h2>
+            <canvas id="overview-strength-chart" class="canvas-block" width="960" height="280"></canvas>
+          </div>
+          <div class="surface">
+            <h2 class="section-title">Leader Trend</h2>
+            <canvas id="overview-leader-chart" class="canvas-block" width="960" height="280"></canvas>
           </div>
         </div>
-        <div class="overview-toolbar">
-          <div>
-            <div class="kicker" style="margin-bottom:8px;">Quick filters</div>
-            <div id="overview-filter-bar" class="overview-filter-bar">
-              <button type="button" class="filter-chip active" data-overview-filter="all">All</button>
-              <button type="button" class="filter-chip" data-overview-filter="Bullish setup">Bullish</button>
-              <button type="button" class="filter-chip" data-overview-filter="Improving trend">Improving</button>
-              <button type="button" class="filter-chip" data-overview-filter="Caution">Caution</button>
-              <button type="button" class="filter-chip" data-overview-filter="Mixed trend">Mixed</button>
-              <button type="button" class="filter-chip" data-overview-filter="Avoid for now">Avoid</button>
-            </div>
+        <div class="workspace-grid-compact">
+          <div class="surface">
+            <h2 class="section-title">Leaders</h2>
+            <div id="overview-leaders" class="row-list"></div>
           </div>
-          <label class="search-group" for="overview-search">
-            <div class="kicker" style="margin-bottom:8px;">Find a ticker</div>
-            <input id="overview-search" class="search-input" type="search" placeholder="Search by symbol, status, or outlook" />
-          </label>
+          <div class="surface">
+            <h2 class="section-title">What Changed</h2>
+            <div id="overview-changes" class="row-list"></div>
+          </div>
         </div>
-        <p id="overview-results-copy" class="overview-results-copy">Showing all ranked tickers.</p>
-        <div id="overview-grid" class="overview-grid"></div>
         <div class="surface ranking-table-wrap">
-          <div class="section-head" style="margin-top:0; margin-bottom:12px;">
-            <div>
-              <h3>Why the order looks this way</h3>
-              <p>Each row explains why a ticker sits above or below the others on this run.</p>
-            </div>
-          </div>
+          <h2 class="section-title">Ranking</h2>
           <table>
             <thead>
               <tr>
                 <th>Rank</th>
                 <th>Symbol</th>
                 <th>Signal</th>
-                <th>Confidence</th>
                 <th>Vs market</th>
-                <th>Why it sits here</th>
+                <th>Confidence</th>
+                <th>Note</th>
               </tr>
             </thead>
             <tbody id="ranking-table-body"></tbody>
           </table>
         </div>
-        <div class="footnote">These signals summarize backtest-style model outputs. They help you review relative strength and risk, but they are not a substitute for your own investment judgment.</div>
       </section>
 
       <section id="ticker-panel" class="panel">
         <div class="ticker-toolbar">
-          <div>
-            <div class="eyebrow">Ticker detail</div>
-            <div id="ticker-name" class="ticker-title"></div>
-            <p id="ticker-subtitle" class="ticker-subtitle"></p>
-          </div>
-          <div class="card-actions">
-            <button class="ghost-button" onclick="showOverview()">Back to overview</button>
-            <button class="ghost-button" onclick="showSystem()">Open system view</button>
+          <div class="workspace-head">
+            <div class="stat-block wide">
+              <span class="stat-label">Ticker</span>
+              <div id="ticker-name" class="ticker-title"></div>
+              <p id="ticker-subtitle" class="ticker-subtitle"></p>
+              <p id="ticker-recommendation-subtitle" class="signal-subtitle"></p>
+            </div>
+            <div class="stat-block">
+              <span class="stat-label">Signal</span>
+              <div id="ticker-recommendation-badge" class="badge badge-overview">n/a</div>
+            </div>
+            <div class="stat-block">
+              <span class="stat-label">Confidence</span>
+              <div id="ticker-confidence-badge" class="badge badge-low">n/a</div>
+            </div>
+            <div class="stat-block">
+              <span class="stat-label">Status</span>
+              <div id="ticker-status-badge" class="badge badge-low">n/a</div>
+            </div>
+            <div class="stat-block">
+              <span class="stat-label">Outlook</span>
+              <div id="ticker-outlook-badge" class="badge badge-overview">n/a</div>
+            </div>
+            <div class="stat-block">
+              <span class="stat-label">Vs Market</span>
+              <div id="ticker-vs-buy" class="stat-value">n/a</div>
+            </div>
+            <div class="stat-block">
+              <span class="stat-label">Vs Base</span>
+              <div id="ticker-vs-base" class="stat-value">n/a</div>
+            </div>
+            <div class="stat-block">
+              <span class="stat-label">Rank</span>
+              <div id="ticker-rank" class="stat-value">n/a</div>
+            </div>
+            <div class="stat-block">
+              <span class="stat-label">Active Profile</span>
+              <div id="ticker-active-model" class="stat-copy">n/a</div>
+              <div id="ticker-active-source" class="stat-copy">n/a</div>
+            </div>
           </div>
         </div>
-        <div class="badge-row">
-          <span id="ticker-recommendation-badge" class="badge badge-overview">n/a</span>
-          <span id="ticker-confidence-badge" class="badge badge-low">n/a</span>
-          <span id="ticker-status-badge" class="badge badge-low">n/a</span>
-          <span id="ticker-outlook-badge" class="badge badge-overview">n/a</span>
-        </div>
-        <p id="ticker-recommendation-subtitle" class="signal-subtitle"></p>
-        <div class="detail-metrics">
+        <div class="workspace-grid">
           <div class="surface">
-            <div class="kicker">Model vs market</div>
-            <div id="ticker-vs-buy" class="metric-value">n/a</div>
-            <div class="metric-sub">How the active setup compares with buy-and-hold.</div>
+            <h2 class="section-title">Trend</h2>
+            <canvas id="ticker-chart" class="canvas-block compact" width="960" height="230"></canvas>
           </div>
           <div class="surface">
-            <div class="kicker">Model vs base</div>
-            <div id="ticker-vs-base" class="metric-value">n/a</div>
-            <div class="metric-sub">How the active setup compares with your baseline profile.</div>
-          </div>
-          <div class="surface">
-            <div class="kicker">Active model</div>
-            <div id="ticker-active-model" class="metric-value">n/a</div>
-            <div id="ticker-active-source" class="metric-sub">n/a</div>
-          </div>
-          <div class="surface">
-            <div class="kicker">Market rank</div>
-            <div id="ticker-rank" class="metric-value">n/a</div>
-            <div class="metric-sub">How this ticker ranks against the rest of today's list.</div>
+            <h2 class="section-title">Rank</h2>
+            <canvas id="ticker-rank-chart" class="canvas-block compact" width="960" height="230"></canvas>
           </div>
         </div>
-        <div class="detail-grid">
+        <div class="workspace-grid-triple">
           <div class="surface">
-            <div class="section-head" style="margin-top:0; margin-bottom:12px;">
-              <div>
-                <h3>Why this looks interesting</h3>
-                <p>Plain-English explanation of the current signal.</p>
+            <h2 class="section-title">Signal</h2>
+            <div class="signal-list">
+              <div class="signal-line">
+                <span class="signal-label">Action</span>
+                <p id="ticker-action" class="signal-value"></p>
+              </div>
+              <div class="signal-line">
+                <span class="signal-label">Summary</span>
+                <p id="ticker-summary" class="signal-value"></p>
+              </div>
+              <div class="signal-line">
+                <span class="signal-label">Watch Next</span>
+                <p id="ticker-watch" class="signal-value"></p>
+              </div>
+              <div class="signal-line">
+                <span class="signal-label">Peers</span>
+                <p id="ticker-peer-comparison" class="signal-value"></p>
               </div>
             </div>
-            <p id="ticker-action" class="body-copy"></p>
-            <p id="ticker-summary" class="body-copy" style="margin-top:12px;"></p>
-            <div class="watch-box details-note"><strong>What to watch next:</strong> <span id="ticker-watch"></span></div>
-            <div class="watch-box details-note"><strong>How it compares with peers:</strong> <span id="ticker-peer-comparison"></span></div>
           </div>
-          <div class="chart-wrap">
-            <div class="section-head" style="margin-top:0; margin-bottom:12px;">
-              <div>
-                <h3>Recent edge trend</h3>
-                <p>Active model edge over recent daily runs.</p>
-              </div>
-            </div>
-            <canvas id="ticker-chart" width="960" height="260"></canvas>
-          </div>
-        </div>
-        <div class="detail-grid">
           <div class="surface">
-            <div class="section-head" style="margin-top:0; margin-bottom:12px;">
-              <div>
-                <h3>Profile options</h3>
-                <p>How the available profiles stack up for this ticker.</p>
-              </div>
-            </div>
+            <h2 class="section-title">Profiles</h2>
             <table>
               <thead><tr><th>Profile</th><th>Rank</th><th>Gap vs Buy/Hold</th></tr></thead>
               <tbody id="profile-table"></tbody>
             </table>
           </div>
           <div class="surface">
-            <div class="section-head" style="margin-top:0; margin-bottom:12px;">
-              <div>
-                <h3>Reports and deep-dive pages</h3>
-                <p>Open the technical reports when you want the full context behind the summary.</p>
-              </div>
-            </div>
+            <h2 class="section-title">Reports</h2>
             <div class="report-list" id="report-links"></div>
-            <div class="preview">
-              <select id="preview-select" class="select-input" onchange="previewReport()">
-                <option value="">Preview a report...</option>
-              </select>
-              <iframe id="preview-frame" style="display:none;"></iframe>
-            </div>
           </div>
         </div>
         <details class="details-note">
@@ -2224,8 +2333,6 @@ def render_product_dashboard(
     const tickerOrder = {json.dumps(tickers_sorted)};
     const latestHealthRun = {json.dumps(latest_health_run)};
     let currentTicker = null;
-    let overviewFilter = 'all';
-    let overviewSearch = '';
 
     function escapeHtml(value) {{
       return String(value ?? '')
@@ -2281,51 +2388,6 @@ def render_product_dashboard(
       return rankingData.find((item) => item.symbol === symbol) || null;
     }}
 
-    function filteredRankedEntries(rankedEntries) {{
-      const search = overviewSearch.trim().toLowerCase();
-      return rankedEntries.filter((entry) => {{
-        const data = tickerData[entry.symbol];
-        if (!data) return false;
-        const matchesFilter = overviewFilter === 'all' || data.recommendation === overviewFilter;
-        if (!matchesFilter) return false;
-        if (!search) return true;
-        const haystack = [
-          entry.symbol,
-          data.recommendation,
-          data.recommendation_subtitle,
-          data.status,
-          data.outlook,
-          data.summary,
-          data.action,
-          data.what_to_watch,
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-        return haystack.includes(search);
-      }});
-    }}
-
-    function syncOverviewControls(filteredCount, totalCount) {{
-      document.querySelectorAll('[data-overview-filter]').forEach((button) => {{
-        const selected = (button.dataset.overviewFilter || 'all') === overviewFilter;
-        button.classList.toggle('active', selected);
-      }});
-      const searchInput = document.getElementById('overview-search');
-      if (searchInput && searchInput.value !== overviewSearch) {{
-        searchInput.value = overviewSearch;
-      }}
-      const resultsCopy = document.getElementById('overview-results-copy');
-      if (!resultsCopy) return;
-      if (filteredCount === totalCount && !overviewSearch.trim() && overviewFilter === 'all') {{
-        resultsCopy.textContent = `Showing all ${{totalCount}} ranked tickers.`;
-        return;
-      }}
-      const filterLabel = overviewFilter === 'all' ? 'all signals' : overviewFilter;
-      const searchLabel = overviewSearch.trim() ? ` matching "${{overviewSearch.trim()}}"` : '';
-      resultsCopy.textContent = `Showing ${{filteredCount}} of ${{totalCount}} tickers for ${{filterLabel}}${{searchLabel}}.`;
-    }}
-
     function collectTickerLinks(symbol, data) {{
       const links = [];
       globalReports.forEach((item) => links.push(item));
@@ -2347,6 +2409,127 @@ def render_product_dashboard(
       if (active && active.visual_report) return {{ label: `${{symbol}} ${{active.profile}} report`, url: active.visual_report }};
       const fallback = (data.profiles || []).find((item) => item.visual_report);
       return fallback && fallback.visual_report ? {{ label: `${{symbol}} ${{fallback.profile}} report`, url: fallback.visual_report }} : null;
+    }}
+
+    function drawCanvasMessage(ctx, canvas, message) {{
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#64748b';
+      ctx.font = '14px Arial';
+      ctx.fillText(message, 24, 32);
+    }}
+
+    function drawLineChart(canvasId, series, options = {{}}) {{
+      const canvas = document.getElementById(canvasId);
+      const ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
+      if (!ctx || !canvas) return;
+
+      const validSeries = series.filter((item) => Array.isArray(item.points) && item.points.some((point) => point != null));
+      const allValues = validSeries.flatMap((item) => item.points.filter((point) => point != null));
+      if (allValues.length < 2) {{
+        drawCanvasMessage(ctx, canvas, options.emptyMessage || 'Need at least two points to draw this chart.');
+        return;
+      }}
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const minV = Math.min(...allValues, options.includeZero ? 0 : Math.min(...allValues));
+      const maxV = Math.max(...allValues, options.includeZero ? 0 : Math.max(...allValues));
+      const range = Math.max(maxV - minV, 1e-6);
+      const pad = 34;
+      const pointCount = Math.max(...validSeries.map((item) => item.points.length), 2);
+      const toX = (index) => pad + (index * (canvas.width - pad * 2)) / Math.max(pointCount - 1, 1);
+      const toY = options.invertY
+        ? (value) => pad + ((value - minV) * (canvas.height - pad * 2)) / range
+        : (value) => canvas.height - pad - ((value - minV) * (canvas.height - pad * 2)) / range;
+
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      [0.25, 0.5, 0.75].forEach((ratio) => {{
+        const y = pad + ratio * (canvas.height - pad * 2);
+        ctx.beginPath();
+        ctx.moveTo(pad, y);
+        ctx.lineTo(canvas.width - pad, y);
+        ctx.stroke();
+      }});
+      if (options.includeZero && minV <= 0 && maxV >= 0) {{
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.beginPath();
+        ctx.moveTo(pad, toY(0));
+        ctx.lineTo(canvas.width - pad, toY(0));
+        ctx.stroke();
+      }}
+
+      validSeries.forEach((item) => {{
+        let started = false;
+        ctx.beginPath();
+        ctx.strokeStyle = item.color;
+        ctx.lineWidth = 2.2;
+        item.points.forEach((value, index) => {{
+          if (value == null) return;
+          const x = toX(index);
+          const y = toY(value);
+          if (!started) {{
+            ctx.moveTo(x, y);
+            started = true;
+          }} else {{
+            ctx.lineTo(x, y);
+          }}
+        }});
+        if (started) ctx.stroke();
+      }});
+
+      ctx.font = '12px Arial';
+      validSeries.forEach((item, index) => {{
+        const x = pad + index * 160;
+        ctx.fillStyle = item.color;
+        ctx.fillRect(x, 14, 16, 3);
+        ctx.fillStyle = '#475569';
+        ctx.fillText(item.label, x + 22, 19);
+      }});
+    }}
+
+    function drawBarChart(canvasId, rows) {{
+      const canvas = document.getElementById(canvasId);
+      const ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
+      if (!ctx || !canvas) return;
+
+      const chartRows = rows.filter((row) => row.value != null);
+      if (!chartRows.length) {{
+        drawCanvasMessage(ctx, canvas, 'No current edge values available.');
+        return;
+      }}
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const pad = 36;
+      const maxAbs = Math.max(...chartRows.map((row) => Math.abs(row.value)), 1);
+      const zeroY = canvas.height / 2;
+      const slot = (canvas.width - pad * 2) / chartRows.length;
+
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(pad, zeroY);
+      ctx.lineTo(canvas.width - pad, zeroY);
+      ctx.stroke();
+
+      chartRows.forEach((row, index) => {{
+        const barWidth = Math.min(42, slot * 0.58);
+        const x = pad + index * slot + (slot - barWidth) / 2;
+        const height = (Math.abs(row.value) / maxAbs) * (canvas.height / 2 - pad - 18);
+        const y = row.value >= 0 ? zeroY - height : zeroY;
+        ctx.fillStyle = row.value >= 0 ? '#2563eb' : '#dc2626';
+        ctx.fillRect(x, y, barWidth, height);
+        ctx.fillStyle = '#475569';
+        ctx.font = '11px Arial';
+        ctx.fillText(row.symbol, x, canvas.height - 12);
+      }});
     }}
 
     function showOverview() {{
@@ -2380,7 +2563,6 @@ def render_product_dashboard(
       const holdoffCount = ranked.filter((item) => item.recommendation === 'Avoid for now' || item.status === 'Critical').length;
       const leaderEntry = rankedEntries[0] || null;
       const leader = leaderEntry ? tickerData[leaderEntry.symbol] : null;
-      const visibleEntries = filteredRankedEntries(rankedEntries);
       const leaderSignal = leader
         ? leader.recommendation + (leader.recommendation_subtitle ? ` (${{leader.recommendation_subtitle}})` : '')
         : '';
@@ -2393,73 +2575,65 @@ def render_product_dashboard(
       document.getElementById('overview-leader-copy').textContent = leader
         ? `${{leaderSignal}} · ${{leader.active_vs_buy_pct_text || 'n/a'}} vs buy-and-hold · ${{leader.confidence}} confidence · ${{(leaderEntry && leaderEntry.comparison) || ''}}`
         : 'Waiting for ranked ticker data.';
-      syncOverviewControls(visibleEntries.length, rankedEntries.length);
 
-      const grid = document.getElementById('overview-grid');
-      grid.innerHTML = '';
-      if (visibleEntries.length === 0) {{
-        const empty = document.createElement('div');
-        empty.className = 'surface';
-        empty.innerHTML = '<div class="kicker">No matches</div><div class="metric-sub">Try a different search or clear the current filter.</div>';
-        grid.appendChild(empty);
-      }}
-      visibleEntries.forEach((entry) => {{
+      const leadersWrap = document.getElementById('overview-leaders');
+      leadersWrap.innerHTML = '';
+      rankedEntries.slice(0, 6).forEach((entry) => {{
         const data = tickerData[entry.symbol];
         if (!data) return;
-        const symbol = data.symbol;
-        const report = primaryTickerReport(symbol, data);
-        const card = document.createElement('article');
-        card.className = 'ticker-card';
-        card.innerHTML = `
-          <div class="ticker-card-top">
-            <div>
-              <div class="ticker-card-symbol">${{escapeHtml(symbol)}}</div>
-              <div class="ticker-card-rank">Priority #${{entry.rank}} · ${{escapeHtml(data.outlook || 'n/a')}}</div>
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'row-item-button';
+        button.innerHTML = `
+          <div class="row-item">
+            <div class="row-item-main">
+              <strong>${{escapeHtml(entry.symbol)}}</strong>
+              <span class="row-item-meta">${{escapeHtml(data.active_vs_buy_pct_text || 'n/a')}}</span>
             </div>
-            <div class="badge-row">
-              <span class="badge ${{recommendationClass(data.recommendation)}}">${{escapeHtml(data.recommendation || 'n/a')}}</span>
-              <span class="badge ${{confidenceClass(data.confidence)}}">${{escapeHtml(data.confidence || 'n/a')}} confidence</span>
-            </div>
-          </div>
-          <p class="ticker-card-signal">${{escapeHtml(data.recommendation_subtitle || '')}}</p>
-          <div class="metric-strip">
-            <div>
-              <div class="item-label">Vs market</div>
-              <div class="item-value">${{escapeHtml(data.active_vs_buy_pct_text || 'n/a')}}</div>
-            </div>
-            <div>
-              <div class="item-label">Vs base</div>
-              <div class="item-value">${{escapeHtml(data.active_vs_base_pct_text || 'n/a')}}</div>
-            </div>
-            <div>
-              <div class="item-label">Status</div>
-              <div class="item-value">${{escapeHtml(data.status || 'n/a')}}</div>
-            </div>
-          </div>
-          <p class="ticker-card-copy">${{escapeHtml(data.action || '')}}</p>
-          <p class="ticker-card-copy">${{escapeHtml(entry.reason || data.summary || '')}}</p>
-          <p class="comparison-copy">${{escapeHtml(entry.comparison || '')}}</p>
-          <div class="watch-box"><strong>What to watch:</strong> ${{escapeHtml(data.what_to_watch || '')}}</div>
-          <div class="card-actions">
-            <button class="primary-button open-details" type="button">Open details</button>
-            ${{report ? `<a class="link-button" href="${{escapeHtml(report.url)}}" target="_blank" rel="noopener noreferrer">Open report</a>` : ''}}
+            <div class="row-item-note">${{escapeHtml(data.recommendation_subtitle || data.recommendation || '')}}</div>
+            <div class="row-item-note">${{escapeHtml(entry.comparison || entry.reason || '')}}</div>
           </div>
         `;
-        const openButton = card.querySelector('.open-details');
-        if (openButton) {{
-          openButton.addEventListener('click', () => showTicker(symbol));
-        }}
-        grid.appendChild(card);
+        button.addEventListener('click', () => showTicker(entry.symbol));
+        leadersWrap.appendChild(button);
       }});
+      if (!leadersWrap.children.length) {{
+        leadersWrap.innerHTML = '<div class="row-item"><div class="row-item-note">No ranked tickers yet.</div></div>';
+      }}
+
+      const changesWrap = document.getElementById('overview-changes');
+      changesWrap.innerHTML = '';
+      const changes = Array.isArray(runDelta.symbol_changes) ? runDelta.symbol_changes : [];
+      if (!changes.length) {{
+        changesWrap.innerHTML = '<div class="row-item"><div class="row-item-note">Need two runs to show what changed.</div></div>';
+      }} else {{
+        changes.slice(0, 8).forEach((item) => {{
+          const row = document.createElement('div');
+          const gapText = item.gap_delta == null ? 'n/a' : `${{(Number(item.gap_delta) * 100).toFixed(2)}}%`;
+          const rankText = item.rank_delta == null ? 'n/a' : Number(item.rank_delta).toFixed(2);
+          const profileText = item.profile_changed
+            ? `${{item.profile_previous || 'n/a'}} → ${{item.profile_latest || 'n/a'}}`
+            : (item.profile_latest || item.profile_previous || 'n/a');
+          row.className = 'row-item';
+          row.innerHTML = `
+            <div class="row-item-main">
+              <strong>${{escapeHtml(item.symbol || '')}}</strong>
+              <span class="row-item-meta">${{escapeHtml(gapText)}}</span>
+            </div>
+            <div class="row-item-note">${{escapeHtml(profileText)}} · rank Δ ${{escapeHtml(rankText)}}</div>
+          `;
+          changesWrap.appendChild(row);
+        }});
+      }}
 
       const rankingBody = document.getElementById('ranking-table-body');
       rankingBody.innerHTML = '';
-      if (visibleEntries.length === 0) {{
+      if (!rankedEntries.length) {{
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td colspan="6">No tickers match the current filter.</td>';
+        tr.innerHTML = '<td colspan="6">No ranked tickers available.</td>';
         rankingBody.appendChild(tr);
       }}
-      visibleEntries.forEach((entry) => {{
+      rankedEntries.forEach((entry) => {{
         const data = tickerData[entry.symbol];
         if (!data) return;
         const tr = document.createElement('tr');
@@ -2467,12 +2641,41 @@ def render_product_dashboard(
           <td>#${{entry.rank}}</td>
           <td>${{escapeHtml(entry.symbol)}}</td>
           <td>${{escapeHtml(data.recommendation || 'n/a')}}</td>
-          <td>${{escapeHtml(data.confidence || 'n/a')}}</td>
           <td>${{escapeHtml(data.active_vs_buy_pct_text || 'n/a')}}</td>
+          <td>${{escapeHtml(data.confidence || 'n/a')}}</td>
           <td>${{escapeHtml(entry.comparison || entry.reason || '')}}</td>
         `;
         rankingBody.appendChild(tr);
       }});
+
+      drawBarChart(
+        'overview-strength-chart',
+        rankedEntries.slice(0, 10).map((entry) => {{
+          const data = tickerData[entry.symbol];
+          return {{
+            symbol: entry.symbol,
+            value: data ? data.active_vs_buy_pct_value : null,
+          }};
+        }})
+      );
+      drawLineChart(
+        'overview-leader-chart',
+        leader
+          ? [
+              {{
+                label: 'active edge',
+                color: '#2563eb',
+                points: (leader.history || []).map((item) => item.active_gap),
+              }},
+              {{
+                label: 'selected edge',
+                color: '#94a3b8',
+                points: (leader.history || []).map((item) => item.selected_gap),
+              }},
+            ]
+          : [],
+        {{ includeZero: true, emptyMessage: 'No leader trend is available yet.' }}
+      );
     }}
 
     function drawSystem() {{
@@ -2810,8 +3013,9 @@ def render_product_dashboard(
       const links = collectTickerLinks(symbol, data);
       const linkWrap = document.getElementById('report-links');
       linkWrap.innerHTML = '';
-      const preview = document.getElementById('preview-select');
-      preview.innerHTML = '<option value="">Preview a report...</option>';
+      if (!links.length) {{
+        linkWrap.innerHTML = '<div class="row-item-note">No linked reports for this ticker.</div>';
+      }}
       links.forEach((item) => {{
         const a = document.createElement('a');
         a.href = item.url;
@@ -2819,112 +3023,59 @@ def render_product_dashboard(
         a.rel = 'noopener noreferrer';
         a.textContent = item.label;
         linkWrap.appendChild(a);
-        const option = document.createElement('option');
-        option.value = item.url;
-        option.textContent = item.label;
-        preview.appendChild(option);
       }});
       drawTickerChart();
+      drawTickerRankChart();
     }}
 
     function drawTickerChart() {{
       const data = tickerData[currentTicker];
-      const canvas = document.getElementById('ticker-chart');
-      const ctx = canvas.getContext('2d');
-      if (!ctx || !data) return;
-
-      const history = data.history || [];
-      const activeValues = history.map((item) => item.active_gap).filter((value) => value != null);
-      const selectedValues = history.map((item) => item.selected_gap).filter((value) => value != null);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      const values = activeValues.concat(selectedValues);
-      if (values.length < 2) {{
-        ctx.fillStyle = '#64748b';
-        ctx.font = '14px Arial';
-        ctx.fillText('Need at least two daily points to draw a trend.', 24, 32);
-        return;
-      }}
-
-      const minV = Math.min(...values, 0);
-      const maxV = Math.max(...values, 0);
-      const range = Math.max(maxV - minV, 1e-6);
-      const pad = 34;
-      const toX = (i) => pad + (i * (canvas.width - pad * 2)) / Math.max(history.length - 1, 1);
-      const toY = (v) => canvas.height - pad - ((v - minV) * (canvas.height - pad * 2)) / range;
-
-      ctx.strokeStyle = '#cbd5e1';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(pad, toY(0));
-      ctx.lineTo(canvas.width - pad, toY(0));
-      ctx.stroke();
-
-      function drawSeries(color, valuesGetter) {{
-        let started = false;
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        history.forEach((item, index) => {{
-          const value = valuesGetter(item);
-          if (value == null) return;
-          const x = toX(index);
-          const y = toY(value);
-          if (!started) {{
-            ctx.moveTo(x, y);
-            started = true;
-          }} else {{
-            ctx.lineTo(x, y);
-          }}
-        }});
-        if (started) ctx.stroke();
-      }}
-
-      drawSeries('#1d4ed8', (item) => item.active_gap);
-      drawSeries('#94a3b8', (item) => item.selected_gap);
-
-      ctx.fillStyle = '#475569';
-      ctx.font = '12px Arial';
-      ctx.fillText('Blue = active model edge', pad, 18);
-      ctx.fillText('Gray = selected profile edge', pad + 180, 18);
+      if (!data) return;
+      drawLineChart(
+        'ticker-chart',
+        [
+          {{
+            label: 'active edge',
+            color: '#2563eb',
+            points: (data.history || []).map((item) => item.active_gap),
+          }},
+          {{
+            label: 'selected edge',
+            color: '#94a3b8',
+            points: (data.history || []).map((item) => item.selected_gap),
+          }},
+        ],
+        {{ includeZero: true, emptyMessage: 'Need at least two daily points to draw this trend.' }}
+      );
     }}
 
-    function previewReport() {{
-      const select = document.getElementById('preview-select');
-      const frame = document.getElementById('preview-frame');
-      const src = select.value;
-      if (!src) {{
-        frame.style.display = 'none';
-        frame.removeAttribute('src');
-        return;
-      }}
-      frame.style.display = 'block';
-      frame.src = src;
+    function drawTickerRankChart() {{
+      const data = tickerData[currentTicker];
+      if (!data) return;
+      drawLineChart(
+        'ticker-rank-chart',
+        [
+          {{
+            label: 'active rank',
+            color: '#0f172a',
+            points: (data.history || []).map((item) => item.active_rank),
+          }},
+        ],
+        {{ invertY: true, emptyMessage: 'Need at least two daily points to draw this rank history.' }}
+      );
     }}
 
     window.addEventListener('resize', () => {{
+      if (document.getElementById('overview-panel').classList.contains('active')) renderOverview();
       if (document.getElementById('system-panel').classList.contains('active')) drawSystem();
-      if (document.getElementById('ticker-panel').classList.contains('active')) drawTickerChart();
+      if (document.getElementById('ticker-panel').classList.contains('active')) {{
+        drawTickerChart();
+        drawTickerRankChart();
+      }}
     }});
 
     const initialTicker = rankedTickers()[0] || tickerOrder[0] || null;
     currentTicker = initialTicker;
-    document.querySelectorAll('[data-overview-filter]').forEach((button) => {{
-      button.addEventListener('click', () => {{
-        overviewFilter = button.dataset.overviewFilter || 'all';
-        renderOverview();
-      }});
-    }});
-    const overviewSearchInput = document.getElementById('overview-search');
-    if (overviewSearchInput) {{
-      overviewSearchInput.addEventListener('input', (event) => {{
-        overviewSearch = event.target && typeof event.target.value === 'string' ? event.target.value : '';
-        renderOverview();
-      }});
-    }}
-
     showOverview();
   </script>
 </body>

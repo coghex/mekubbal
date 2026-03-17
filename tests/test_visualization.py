@@ -257,27 +257,31 @@ def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
     )
     assert result.exists()
     text = result.read_text(encoding="utf-8")
-    assert "Today's ticker shortlist" in text
+    assert 'id="nav-overview"' in text
+    assert ">ALL</button>" in text
+    assert ">SYS</button>" in text
     assert "showOverview" in text
     assert "SYSTEM" in text
     assert "showSystem" in text
     assert "renderRunDelta" in text
     assert "What changed since last run" in text
     assert "showTicker" in text
-    assert "Why the order looks this way" in text
-    assert "Why this looks interesting" in text
-    assert "What to watch next" in text
-    assert "How it compares with peers" in text
-    assert "Quick filters" in text
-    assert "Find a ticker" in text
-    assert "overview-filter-bar" in text
-    assert "overview-search" in text
-    assert "Showing all" in text
+    assert "Relative Strength" in text
+    assert "Leader Trend" in text
+    assert "Leaders" in text
+    assert "What Changed" in text
+    assert "Ranking" in text
+    assert "Trend" in text
+    assert "Rank" in text
+    assert "Signal" in text
+    assert "Profiles" in text
+    assert "Reports" in text
     assert "positive and stable" in text
     assert "warning flags are active" in text
     assert "Ahead of MSFT" in text
     assert "System matrix workspace" in text
     assert "aapl_candidate.html" in text
+    assert "Mekubbal Market Pulse" not in text
 
 
 def test_render_product_dashboard_includes_shadow_gate_panel(tmp_path):
