@@ -1629,7 +1629,7 @@ def render_product_dashboard(
         raise ValueError("No ticker rows found for product dashboard.")
     nav_buttons = "".join(
         (
-            f"<button id='nav-{ticker}' class='nav-button' "
+            f"<button id='nav-{ticker}' class='nav-button nav-ticker-button' "
             f'onclick="showTicker(\'{ticker}\')">{ticker}</button>'
         )
         for ticker in tickers_sorted
@@ -1685,8 +1685,8 @@ def render_product_dashboard(
       gap: 8px;
       min-height: 100vh;
     }}
-    .ticker-rail {{ display: flex; flex-direction: column; align-items: center; gap: 6px; overflow: auto; }}
-    .rail-bottom {{ margin-top: auto; padding-top: 8px; display: flex; justify-content: center; }}
+    .ticker-rail {{ display: flex; flex-direction: column; align-items: stretch; gap: 6px; overflow: auto; }}
+    .rail-bottom {{ margin-top: auto; padding-top: 8px; display: flex; justify-content: stretch; }}
     .brand {{ font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }}
     .brand-copy {{ margin-top: 8px; font-size: 13px; line-height: 1.5; color: #cbd5e1; }}
     .nav-section {{ margin-top: 18px; }}
@@ -1699,12 +1699,12 @@ def render_product_dashboard(
       color: #94a3b8;
     }}
     .nav-button {{
-      width: auto;
-      min-width: 52px;
+      width: 100%;
+      min-width: 0;
       text-align: center;
-      padding: 10px 10px;
+      padding: 10px 6px;
       border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 8px;
+      border-radius: 4px;
       margin: 0;
       cursor: pointer;
       color: #e4e4e7;
@@ -1713,6 +1713,26 @@ def render_product_dashboard(
       letter-spacing: 0.06em;
       font-size: 11px;
       line-height: 1;
+    }}
+    .nav-ticker-button {{ min-height: 42px; }}
+    .nav-overview-button {{
+      background: transparent;
+      border: 0;
+      border-bottom: 1px solid #27272a;
+      border-radius: 0;
+      color: #a1a1aa;
+      padding: 4px 0 12px;
+      margin-bottom: 4px;
+    }}
+    .nav-overview-button.active {{
+      background: transparent;
+      color: #fafafa;
+      border-color: #52525b;
+    }}
+    .nav-system-button {{
+      background: transparent;
+      color: #a1a1aa;
+      border-color: #27272a;
     }}
     .nav-button.active {{
       background: #fafafa;
@@ -1732,7 +1752,7 @@ def render_product_dashboard(
     .stat-block {{
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 12px;
+      border-radius: 8px;
       padding: 12px 14px;
       box-shadow: var(--shadow);
       min-height: 72px;
@@ -1753,6 +1773,58 @@ def render_product_dashboard(
       letter-spacing: -0.03em;
     }}
     .stat-copy {{ margin-top: 6px; font-size: 12px; line-height: 1.5; color: var(--muted); }}
+    .overview-strip {{
+      display: grid;
+      grid-template-columns: minmax(200px, 0.9fr) minmax(160px, 0.6fr) minmax(260px, 1fr);
+      gap: 0;
+      align-items: stretch;
+      margin-bottom: 14px;
+      overflow: hidden;
+      padding: 0;
+    }}
+    .overview-strip-item {{
+      padding: 14px 16px;
+      border-right: 1px solid #e5e7eb;
+      min-width: 0;
+    }}
+    .overview-strip-item:last-child {{ border-right: none; }}
+    .overview-strip-value {{
+      margin-top: 8px;
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }}
+    .overview-strip-value.timestamp {{
+      font-size: 18px;
+      line-height: 1.3;
+      word-break: break-word;
+    }}
+    .mini-stat-row {{
+      display: flex;
+      gap: 18px;
+      align-items: flex-end;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }}
+    .mini-stat {{
+      min-width: 56px;
+    }}
+    .mini-stat-label {{
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #71717a;
+    }}
+    .mini-stat-value {{
+      display: block;
+      margin-top: 4px;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: #111111;
+    }}
     .workspace-grid {{
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1810,6 +1882,7 @@ def render_product_dashboard(
     .row-item-main strong {{ font-size: 15px; letter-spacing: 0.03em; }}
     .row-item-meta {{ color: #0f172a; font-weight: 700; white-space: nowrap; }}
     .row-item-note {{ color: var(--muted); font-size: 13px; line-height: 1.5; }}
+    .summary-copy {{ margin: 0; color: var(--muted); line-height: 1.7; font-size: 14px; }}
     .row-item-button {{
       width: 100%;
       border: 0;
@@ -1985,7 +2058,7 @@ def render_product_dashboard(
       gap: 10px;
       background: #f8fafc;
       border: 1px solid #e5edf7;
-      border-radius: 14px;
+      border-radius: 8px;
       padding: 12px;
     }}
     .metric-strip .item-label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; }}
@@ -1996,7 +2069,7 @@ def render_product_dashboard(
       background: #f5f5f5;
       border: 1px solid #e4e4e7;
       color: #111111;
-      border-radius: 14px;
+      border-radius: 8px;
       padding: 12px;
       font-size: 13px;
       line-height: 1.5;
@@ -2060,47 +2133,50 @@ def render_product_dashboard(
     @media (max-width: 700px) {{
       .layout {{ grid-template-columns: 64px minmax(0, 1fr); }}
       .hero, .ticker-toolbar, .section-head {{ flex-direction: column; }}
-      .summary-grid, .detail-metrics, .system-grid, .detail-grid, .delta-grid, .workspace-head, .workspace-grid, .workspace-grid-compact, .workspace-grid-triple {{ grid-template-columns: 1fr; }}
+      .summary-grid, .detail-metrics, .system-grid, .detail-grid, .delta-grid, .workspace-head, .workspace-grid, .workspace-grid-compact, .workspace-grid-triple, .overview-strip {{ grid-template-columns: 1fr; }}
+      .overview-strip-item {{ border-right: none; border-bottom: 1px solid #e5e7eb; }}
+      .overview-strip-item:last-child {{ border-bottom: none; }}
     }}
   </style>
 </head>
   <body>
   <div class="layout">
     <aside class="side">
-      <button id="nav-overview" class="nav-button active" onclick="showOverview()">ALL</button>
+      <button id="nav-overview" class="nav-button nav-overview-button active" onclick="showOverview()">ALL</button>
       <div class="ticker-rail">
         {nav_buttons}
       </div>
       <div class="rail-bottom">
-        <button id="nav-system" class="nav-button" onclick="showSystem()">SYS</button>
+        <button id="nav-system" class="nav-button nav-system-button" onclick="showSystem()">SYS</button>
       </div>
     </aside>
     <main class="main">
       <section id="overview-panel" class="panel active">
-        <div class="workspace-head">
-          <div class="stat-block">
+        <div class="surface overview-strip">
+          <div class="overview-strip-item">
             <span class="stat-label">Updated</span>
-            <div id="overview-run-label" class="stat-value">{html.escape(latest_health_run or "n/a")}</div>
+            <div id="overview-run-label" class="overview-strip-value timestamp">{html.escape(latest_health_run or "n/a")}</div>
           </div>
-          <div class="stat-block">
+          <div class="overview-strip-item">
             <span class="stat-label">Leader</span>
-            <div id="overview-leader" class="stat-value">n/a</div>
+            <div id="overview-leader" class="overview-strip-value">n/a</div>
           </div>
-          <div class="stat-block">
-            <span class="stat-label">Bullish</span>
-            <div id="overview-shortlist-count" class="stat-value">0</div>
-          </div>
-          <div class="stat-block">
-            <span class="stat-label">Avoid</span>
-            <div id="overview-holdoff-count" class="stat-value">0</div>
-          </div>
-          <div class="stat-block wide">
-            <span class="stat-label">Lead note</span>
-            <div id="overview-leader-copy" class="stat-copy">Waiting for ranked ticker data.</div>
-          </div>
-          <div class="stat-block">
-            <span class="stat-label">Healthy</span>
-            <div id="overview-healthy-count" class="stat-value">0</div>
+          <div class="overview-strip-item">
+            <span class="stat-label">Signal Mix</span>
+            <div class="mini-stat-row">
+              <div class="mini-stat">
+                <span class="mini-stat-label">Bullish</span>
+                <span id="overview-shortlist-count" class="mini-stat-value">0</span>
+              </div>
+              <div class="mini-stat">
+                <span class="mini-stat-label">Healthy</span>
+                <span id="overview-healthy-count" class="mini-stat-value">0</span>
+              </div>
+              <div class="mini-stat">
+                <span class="mini-stat-label">Avoid</span>
+                <span id="overview-holdoff-count" class="mini-stat-value">0</span>
+              </div>
+            </div>
           </div>
         </div>
         <div class="workspace-grid">
@@ -2138,6 +2214,10 @@ def render_product_dashboard(
             </thead>
             <tbody id="ranking-table-body"></tbody>
           </table>
+        </div>
+        <div class="surface" style="margin-top: 14px;">
+          <h2 class="section-title">Summary</h2>
+          <p id="overview-summary" class="summary-copy">Waiting for ranked ticker data.</p>
         </div>
       </section>
 
@@ -2349,6 +2429,19 @@ def render_product_dashboard(
       if (active) active.classList.add('active');
     }}
 
+    function formatTimestamp(value) {{
+      const text = String(value || '').trim();
+      if (!text) return 'n/a';
+      const date = new Date(text);
+      if (Number.isNaN(date.getTime())) return text;
+      const yyyy = date.getUTCFullYear();
+      const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(date.getUTCDate()).padStart(2, '0');
+      const hh = String(date.getUTCHours()).padStart(2, '0');
+      const min = String(date.getUTCMinutes()).padStart(2, '0');
+      return `${{yyyy}}-${{mm}}-${{dd}} ${{hh}}:${{min}} UTC`;
+    }}
+
     function showPanel(panelId) {{
       ['overview-panel', 'ticker-panel', 'system-panel'].forEach((id) => {{
         const panel = document.getElementById(id);
@@ -2427,8 +2520,8 @@ def render_product_dashboard(
 
       const validSeries = series.filter((item) => Array.isArray(item.points) && item.points.some((point) => point != null));
       const allValues = validSeries.flatMap((item) => item.points.filter((point) => point != null));
-      if (allValues.length < 2) {{
-        drawCanvasMessage(ctx, canvas, options.emptyMessage || 'Need at least two points to draw this chart.');
+      if (allValues.length < 1) {{
+        drawCanvasMessage(ctx, canvas, options.emptyMessage || 'Need at least one point to draw this chart.');
         return;
       }}
 
@@ -2465,6 +2558,7 @@ def render_product_dashboard(
 
       validSeries.forEach((item) => {{
         let started = false;
+        const pointCoords = [];
         ctx.beginPath();
         ctx.strokeStyle = item.color;
         ctx.lineWidth = 2.2;
@@ -2472,6 +2566,7 @@ def render_product_dashboard(
           if (value == null) return;
           const x = toX(index);
           const y = toY(value);
+          pointCoords.push([x, y]);
           if (!started) {{
             ctx.moveTo(x, y);
             started = true;
@@ -2480,6 +2575,12 @@ def render_product_dashboard(
           }}
         }});
         if (started) ctx.stroke();
+        pointCoords.forEach(([x, y]) => {{
+          ctx.fillStyle = item.color;
+          ctx.beginPath();
+          ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+        }});
       }});
 
       ctx.font = '12px Arial';
@@ -2567,13 +2668,13 @@ def render_product_dashboard(
         ? leader.recommendation + (leader.recommendation_subtitle ? ` (${{leader.recommendation_subtitle}})` : '')
         : '';
 
-      document.getElementById('overview-run-label').textContent = runDelta.latest_run_timestamp || latestHealthRun || 'n/a';
+      document.getElementById('overview-run-label').textContent = formatTimestamp(runDelta.latest_run_timestamp || latestHealthRun || 'n/a');
       document.getElementById('overview-shortlist-count').textContent = String(shortlistCount);
       document.getElementById('overview-healthy-count').textContent = String(healthyCount);
       document.getElementById('overview-holdoff-count').textContent = String(holdoffCount);
       document.getElementById('overview-leader').textContent = leader ? leader.symbol : 'n/a';
-      document.getElementById('overview-leader-copy').textContent = leader
-        ? `${{leaderSignal}} · ${{leader.active_vs_buy_pct_text || 'n/a'}} vs buy-and-hold · ${{leader.confidence}} confidence · ${{(leaderEntry && leaderEntry.comparison) || ''}}`
+      document.getElementById('overview-summary').textContent = leader
+        ? `${{leader.symbol}} leads right now with ${{leaderSignal}} at ${{leader.active_vs_buy_pct_text || 'n/a'}} versus buy-and-hold. ${{healthyCount}} tickers are currently healthy, ${{shortlistCount}} look bullish, and ${{holdoffCount}} are in avoid-for-now territory. ${{(leaderEntry && leaderEntry.comparison) || ''}}`
         : 'Waiting for ranked ticker data.';
 
       const leadersWrap = document.getElementById('overview-leaders');

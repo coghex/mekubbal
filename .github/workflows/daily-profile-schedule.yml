@@ -36,6 +36,28 @@ jobs:
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
+      - name: Restore report history from deployed Pages
+        run: |
+          BASE_URL="https://coghex.github.io/mekubbal/logs/profile_matrix_daily/reports"
+          mkdir -p logs/profile_matrix_daily/reports
+          for FILE in \
+            active_profile_health_history.csv \
+            profile_drift_alerts_history.csv \
+            profile_ensemble_history.csv \
+            profile_ensemble_alerts_history.csv \
+            profile_ops_journal.csv \
+            profile_rollback_state.json \
+            shadow_active_profile_health_history.csv \
+            shadow_profile_drift_alerts_history.csv \
+            shadow_profile_ensemble_alerts_history.csv \
+            shadow_profile_ensemble_history.csv \
+            profile_shadow_comparison_history.csv \
+            profile_shadow_suggestions_history.csv \
+            profile_shadow_suggestion_state.json
+          do
+            curl -fsSL "${BASE_URL}/${FILE}" -o "logs/profile_matrix_daily/reports/${FILE}" || true
+          done
+
       - name: Download daily symbol data
         run: |
           END_DATE="$(date -u +%F)"

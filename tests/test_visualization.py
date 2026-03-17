@@ -271,11 +271,14 @@ def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
     assert "Leaders" in text
     assert "What Changed" in text
     assert "Ranking" in text
+    assert "Signal Mix" in text
+    assert "Summary" in text
     assert "Trend" in text
     assert "Rank" in text
     assert "Signal" in text
     assert "Profiles" in text
     assert "Reports" in text
+    assert "nav-overview-button" in text
     assert "positive and stable" in text
     assert "warning flags are active" in text
     assert "Ahead of MSFT" in text
