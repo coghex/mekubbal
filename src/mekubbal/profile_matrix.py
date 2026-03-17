@@ -337,36 +337,38 @@ def _aggregate_profile_rows(symbol_profile_rows: pd.DataFrame, pairwise_rows: pd
     return ranked
 
 
-def run_profile_matrix(
-    config_path: str | Path,
+def run_profile_matrix_config(
+    config: dict[str, Any],
     *,
+    config_dir: str | Path,
+    config_label: str = "<inline>",
     symbols_override: list[str] | None = None,
     promotion_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    config_file = Path(config_path).resolve()
-    config = load_profile_matrix_config(config_file)
-    config_dir = config_file.parent
+    config_dir_path = Path(config_dir).resolve()
+    runtime_config = deepcopy(config)
+    _validate_profile_matrix_config(runtime_config, config_dir=config_dir_path)
     if symbols_override is not None:
-        config["symbols"] = [str(value).strip().upper() for value in symbols_override]
-        _validate_profile_matrix_config(config, config_dir=config_dir)
+        runtime_config["symbols"] = [str(value).strip().upper() for value in symbols_override]
+        _validate_profile_matrix_config(runtime_config, config_dir=config_dir_path)
     if promotion_override is not None:
         if not isinstance(promotion_override, dict):
             raise ValueError("promotion_override must be a mapping when provided.")
-        _deep_merge(config["promotion"], promotion_override)
-        _validate_profile_matrix_config(config, config_dir=config_dir)
+        _deep_merge(runtime_config["promotion"], promotion_override)
+        _validate_profile_matrix_config(runtime_config, config_dir=config_dir_path)
 
-    matrix_cfg = config["matrix"]
-    base_runner_cfg = config["base_runner"]
-    comparison_cfg = config["comparison"]
-    promotion_cfg = config["promotion"]
-    symbols = list(config["symbols"])
+    matrix_cfg = runtime_config["matrix"]
+    base_runner_cfg = runtime_config["base_runner"]
+    comparison_cfg = runtime_config["comparison"]
+    promotion_cfg = runtime_config["promotion"]
+    symbols = list(runtime_config["symbols"])
 
-    output_root = _resolve_path(config_dir, str(matrix_cfg["output_root"]))
+    output_root = _resolve_path(config_dir_path, str(matrix_cfg["output_root"]))
     output_root.mkdir(parents=True, exist_ok=True)
     reports_root = output_root / "reports"
     reports_root.mkdir(parents=True, exist_ok=True)
 
-    base_runner_config_path = _resolve_existing_path(config_dir, str(base_runner_cfg["config"]))
+    base_runner_config_path = _resolve_existing_path(config_dir_path, str(base_runner_cfg["config"]))
     base_runner_config = load_profile_runner_config(base_runner_config_path)
     base_runner_dir = base_runner_config_path.parent
 
@@ -533,7 +535,7 @@ def run_profile_matrix(
         )
 
     return {
-        "config_path": str(config_file),
+        "config_path": str(config_label),
         "output_root": str(output_root),
         "symbols_run": int(len(symbols)),
         "profile_count": int(len(profile_symbol_gaps)),
@@ -545,3 +547,20 @@ def run_profile_matrix(
         "profile_selection": profile_selection,
         "dashboard_path": dashboard_path,
     }
+
+
+def run_profile_matrix(
+    config_path: str | Path,
+    *,
+    symbols_override: list[str] | None = None,
+    promotion_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    config_file = Path(config_path).resolve()
+    config = load_profile_matrix_config(config_file)
+    return run_profile_matrix_config(
+        config,
+        config_dir=config_file.parent,
+        config_label=str(config_file),
+        symbols_override=symbols_override,
+        promotion_override=promotion_override,
+    )

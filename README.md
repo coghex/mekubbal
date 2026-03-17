@@ -138,6 +138,14 @@ Daily GitHub Actions schedule config:
 mekubbal-profile-schedule --config configs/profile-schedule-daily.toml
 ```
 
+Rebuild the daily schedule history from raw ticker CSVs (useful after adding tickers or resetting report state):
+
+```bash
+mekubbal-profile-backfill --config configs/profile-schedule-daily.toml --reset-output
+```
+
+You can also limit the replay window with `--start-date`, `--end-date`, `--every`, or `--max-runs`.
+
 The repository includes `.github/workflows/daily-profile-schedule.yml` to run this daily on GitHub-hosted runners and upload report artifacts.
 It now also deploys the latest reports to GitHub Pages (`/logs/profile_matrix_daily/reports/product_dashboard.html`), with `index.html` redirecting there.
 The Pages landing now links directly to ticker summary and ensemble ops artifacts (`profile_ensemble_decisions.csv`, `profile_ensemble_alerts.html`).

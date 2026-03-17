@@ -8,7 +8,7 @@ from typing import Any
 import pandas as pd
 import tomllib
 
-from mekubbal.profile_matrix import load_profile_matrix_config, run_profile_matrix
+from mekubbal.profile_matrix import load_profile_matrix_config, run_profile_matrix, run_profile_matrix_config
 from mekubbal.profile_monitor import run_profile_monitor
 from mekubbal.profile_rollback import run_profile_rollback
 from mekubbal.visualization import render_product_dashboard
@@ -775,17 +775,26 @@ def load_profile_schedule_config(config_path: str | Path) -> dict[str, Any]:
     return merged
 
 
-def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
-    config_file = Path(config_path).resolve()
-    config_dir = config_file.parent
-    config = load_profile_schedule_config(config_file)
-    schedule_cfg = config["schedule"]
-    monitor_cfg = config["monitor"]
-    rollback_cfg = config["rollback"]
-    ensemble_cfg = config["ensemble_v3"]
-    shadow_cfg = config["shadow"]
+def run_profile_schedule_config(
+    config: dict[str, Any],
+    *,
+    config_dir: str | Path,
+    config_label: str = "<inline>",
+    run_timestamp_utc: str | None = None,
+    matrix_config_override: dict[str, Any] | None = None,
+    matrix_config_dir: str | Path | None = None,
+    matrix_config_label: str | None = None,
+) -> dict[str, Any]:
+    config_dir_path = Path(config_dir).resolve()
+    runtime_config = deepcopy(config)
+    _validate_profile_schedule_config(runtime_config, config_dir=config_dir_path)
+    schedule_cfg = runtime_config["schedule"]
+    monitor_cfg = runtime_config["monitor"]
+    rollback_cfg = runtime_config["rollback"]
+    ensemble_cfg = runtime_config["ensemble_v3"]
+    shadow_cfg = runtime_config["shadow"]
 
-    matrix_config = _resolve_path(config_dir, str(schedule_cfg["matrix_config"]))
+    matrix_config_path = _resolve_path(config_dir_path, str(schedule_cfg["matrix_config"]))
     symbols = list(schedule_cfg["symbols"])
     shadow_enabled = bool(shadow_cfg.get("enabled", False))
     shadow_selection_state_path: Path | None = None
@@ -793,10 +802,19 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
     matrix_call_kwargs: dict[str, Any] = {
         "symbols_override": symbols if symbols else None,
     }
+    resolved_matrix_config_dir = (
+        Path(matrix_config_dir).resolve() if matrix_config_dir is not None else matrix_config_path.parent
+    )
+    resolved_matrix_config_label = matrix_config_label or str(matrix_config_path)
+    matrix_runtime_config = (
+        deepcopy(matrix_config_override)
+        if matrix_config_override is not None
+        else load_profile_matrix_config(matrix_config_path)
+    )
     if shadow_enabled:
-        matrix_loaded = load_profile_matrix_config(matrix_config)
+        matrix_loaded = deepcopy(matrix_runtime_config)
         matrix_output_root_hint = _resolve_relative_to(
-            matrix_config.parent.resolve(), str(matrix_loaded["matrix"]["output_root"])
+            resolved_matrix_config_dir, str(matrix_loaded["matrix"]["output_root"])
         )
         matrix_promotion_cfg = dict(matrix_loaded["promotion"])
         production_state_raw = str(shadow_cfg.get("production_state_path", "")).strip()
@@ -818,10 +836,22 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
             "state_path": str(shadow_selection_state_path),
         }
 
-    matrix_summary = run_profile_matrix(
-        matrix_config,
-        **matrix_call_kwargs,
-    )
+    if (
+        matrix_config_override is None
+        and matrix_config_dir is None
+        and matrix_config_label is None
+    ):
+        matrix_summary = run_profile_matrix(
+            matrix_config_path,
+            **matrix_call_kwargs,
+        )
+    else:
+        matrix_summary = run_profile_matrix_config(
+            matrix_runtime_config,
+            config_dir=resolved_matrix_config_dir,
+            config_label=resolved_matrix_config_label,
+            **matrix_call_kwargs,
+        )
     matrix_output_root = Path(str(matrix_summary["output_root"])).resolve()
 
     if shadow_enabled:
@@ -889,6 +919,7 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
         max_gap_drop=float(monitor_cfg["max_gap_drop"]),
         max_rank_worsening=float(monitor_cfg["max_rank_worsening"]),
         min_active_minus_base_gap=float(monitor_cfg["min_active_minus_base_gap"]),
+        run_timestamp_utc=run_timestamp_utc,
         ensemble_low_confidence_threshold=float(monitor_cfg["ensemble_low_confidence_threshold"]),
         ensemble_v3_config=ensemble_cfg,
         ensemble_decisions_csv_path=matrix_output_root / str(ensemble_cfg["decision_csv_path"]),
@@ -1028,7 +1059,7 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
         rollback_summary=rollback_summary,
     )
     summary = {
-        "config_path": str(config_file),
+        "config_path": str(config_label),
         "matrix_summary": matrix_summary,
         "monitor_summary": monitor_summary,
         "shadow_summary": shadow_summary,
@@ -1098,3 +1129,13 @@ def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
     summary["summary_json_path"] = str(summary_path)
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     return summary
+
+
+def run_profile_schedule(config_path: str | Path) -> dict[str, Any]:
+    config_file = Path(config_path).resolve()
+    config = load_profile_schedule_config(config_file)
+    return run_profile_schedule_config(
+        config,
+        config_dir=config_file.parent,
+        config_label=str(config_file),
+    )
