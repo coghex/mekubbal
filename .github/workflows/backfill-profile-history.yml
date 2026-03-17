@@ -1,24 +1,38 @@
-name: Daily Profile Schedule
+name: Backfill Profile History
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - master
-  schedule:
-    - cron: "17 6 * * *"
+    inputs:
+      start_date:
+        description: Optional inclusive replay start date (YYYY-MM-DD)
+        required: false
+        type: string
+      end_date:
+        description: Optional inclusive replay end date (YYYY-MM-DD)
+        required: false
+        type: string
+      every:
+        description: Replay every Nth eligible trading date
+        required: false
+        default: "21"
+        type: string
+      max_runs:
+        description: Optional maximum number of replay runs
+        required: false
+        default: "24"
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: daily-profile-pages
+  group: profile-history-backfill
   cancel-in-progress: false
 
 jobs:
   build-reports:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 360
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,29 +50,7 @@ jobs:
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Restore report history from deployed Pages
-        run: |
-          BASE_URL="https://coghex.github.io/mekubbal/logs/profile_matrix_daily/reports"
-          mkdir -p logs/profile_matrix_daily/reports
-          for FILE in \
-            active_profile_health_history.csv \
-            profile_drift_alerts_history.csv \
-            profile_ensemble_history.csv \
-            profile_ensemble_alerts_history.csv \
-            profile_ops_journal.csv \
-            profile_rollback_state.json \
-            shadow_active_profile_health_history.csv \
-            shadow_profile_drift_alerts_history.csv \
-            shadow_profile_ensemble_alerts_history.csv \
-            shadow_profile_ensemble_history.csv \
-            profile_shadow_comparison_history.csv \
-            profile_shadow_suggestions_history.csv \
-            profile_shadow_suggestion_state.json
-          do
-            curl -fsSL "${BASE_URL}/${FILE}" -o "logs/profile_matrix_daily/reports/${FILE}" || true
-          done
-
-      - name: Download daily symbol data
+      - name: Download ticker data for configured symbols
         run: |
           END_DATE="$(date -u +%F)"
           SYMBOLS="$(python - <<'PY'
@@ -76,13 +68,27 @@ jobs:
               --output "data/${SYMBOL,,}.csv"
           done
 
-      - name: Run daily schedule
-        run: mekubbal-profile-schedule --config configs/profile-schedule-daily.toml
+      - name: Run history backfill
+        run: |
+          ARGS=(--config configs/profile-schedule-daily.toml --reset-output)
+          if [ -n "${{ inputs.start_date }}" ]; then
+            ARGS+=(--start-date "${{ inputs.start_date }}")
+          fi
+          if [ -n "${{ inputs.end_date }}" ]; then
+            ARGS+=(--end-date "${{ inputs.end_date }}")
+          fi
+          if [ -n "${{ inputs.every }}" ]; then
+            ARGS+=(--every "${{ inputs.every }}")
+          fi
+          if [ -n "${{ inputs.max_runs }}" ]; then
+            ARGS+=(--max-runs "${{ inputs.max_runs }}")
+          fi
+          mekubbal-profile-backfill "${ARGS[@]}"
 
-      - name: Upload daily reports artifact
+      - name: Upload backfill reports artifact
         uses: actions/upload-artifact@v4
         with:
-          name: daily-profile-reports
+          name: profile-history-backfill-reports
           path: |
             logs/profile_matrix_daily/reports/**
             logs/profile_matrix_daily/symbols/*/reports/**

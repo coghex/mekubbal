@@ -138,6 +138,8 @@ Daily GitHub Actions schedule config:
 mekubbal-profile-schedule --config configs/profile-schedule-daily.toml
 ```
 
+The daily ticker universe is driven by `configs/profile-matrix-daily.toml`, so adding symbols there updates both the daily run and the manual backfill workflow.
+
 Rebuild the daily schedule history from raw ticker CSVs (useful after adding tickers or resetting report state):
 
 ```bash
@@ -145,6 +147,8 @@ mekubbal-profile-backfill --config configs/profile-schedule-daily.toml --reset-o
 ```
 
 You can also limit the replay window with `--start-date`, `--end-date`, `--every`, or `--max-runs`.
+
+If you do not want to run the replay locally, use the manual GitHub Actions workflow `Backfill Profile History`, which downloads the configured symbols and republishes Pages after the backfill completes.
 
 The repository includes `.github/workflows/daily-profile-schedule.yml` to run this daily on GitHub-hosted runners and upload report artifacts.
 It now also deploys the latest reports to GitHub Pages (`/logs/profile_matrix_daily/reports/product_dashboard.html`), with `index.html` redirecting there.
