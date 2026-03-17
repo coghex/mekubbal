@@ -74,6 +74,127 @@ def _lineage_rows(lineage: dict[str, Any] | None) -> pd.DataFrame:
     return pd.DataFrame(entries)
 
 
+def _ticker_recommendation_priority(label: str) -> int:
+    return {
+        "Bullish setup": 5,
+        "Improving trend": 4,
+        "Caution": 3,
+        "Mixed trend": 2,
+        "Avoid for now": 1,
+    }.get(str(label).strip(), 0)
+
+
+def _ticker_confidence_priority(label: str) -> int:
+    return {"High": 3, "Medium": 2, "Low": 1}.get(str(label).strip(), 0)
+
+
+def _ticker_status_priority(label: str) -> int:
+    return {"Healthy": 2, "Watch": 1, "Critical": 0}.get(str(label).strip(), 0)
+
+
+def _format_pct_points_text(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{float(value):+.2f}%"
+
+
+def _build_ticker_rankings(ticker_payload: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    scored_rows: list[dict[str, Any]] = []
+    for symbol, payload in ticker_payload.items():
+        active_vs_buy = payload.get("active_vs_buy_pct_value")
+        active_vs_base = payload.get("active_vs_base_pct_value")
+        momentum = payload.get("momentum")
+        momentum_points = float(momentum) * 100.0 if momentum is not None else 0.0
+        score = (
+            _ticker_recommendation_priority(str(payload.get("recommendation", ""))) * 100.0
+            + _ticker_confidence_priority(str(payload.get("confidence", ""))) * 20.0
+            + _ticker_status_priority(str(payload.get("status", ""))) * 10.0
+            + (float(active_vs_buy) if active_vs_buy is not None else 0.0)
+            + ((float(active_vs_base) if active_vs_base is not None else 0.0) * 0.5)
+            + (momentum_points * 0.25)
+        )
+        scored_rows.append(
+            {
+                "symbol": symbol,
+                "score": score,
+                "recommendation": str(payload.get("recommendation", "")),
+                "confidence": str(payload.get("confidence", "")),
+                "status": str(payload.get("status", "")),
+                "active_vs_buy_pct_text": str(payload.get("active_vs_buy_pct_text", "n/a")),
+                "active_vs_buy_pct_value": active_vs_buy,
+                "active_vs_base_pct_text": str(payload.get("active_vs_base_pct_text", "n/a")),
+                "active_vs_base_pct_value": active_vs_base,
+                "momentum_points": momentum_points if momentum is not None else None,
+            }
+        )
+
+    scored_rows.sort(
+        key=lambda row: (
+            -float(row["score"]),
+            -(float(row["active_vs_buy_pct_value"]) if row["active_vs_buy_pct_value"] is not None else -10**9),
+            -(float(row["active_vs_base_pct_value"]) if row["active_vs_base_pct_value"] is not None else -10**9),
+            str(row["symbol"]),
+        )
+    )
+
+    rankings: list[dict[str, Any]] = []
+    for index, row in enumerate(scored_rows):
+        symbol = str(row["symbol"])
+        active_vs_buy_text = str(row["active_vs_buy_pct_text"])
+        active_vs_base_text = str(row["active_vs_base_pct_text"])
+        recommendation = str(row["recommendation"])
+        confidence = str(row["confidence"])
+        status = str(row["status"])
+        momentum_points = row.get("momentum_points")
+        reasons = [
+            f"{symbol} ranks #{index + 1} because it is {recommendation.lower()} with {confidence.lower()} confidence.",
+            f"It is running at {active_vs_buy_text} versus buy-and-hold and {active_vs_base_text} versus the base setup.",
+        ]
+        if momentum_points is not None:
+            if float(momentum_points) > 0.2:
+                reasons.append("Its recent daily edge is improving.")
+            elif float(momentum_points) < -0.2:
+                reasons.append("Its recent daily edge has cooled lately.")
+        if status == "Critical":
+            reasons.append("Current warning flags are dragging it down the list.")
+        elif status == "Watch":
+            reasons.append("It stays in the middle of the list because some caution flags are still active.")
+        else:
+            reasons.append("It stays near the top because there are no active drift warnings.")
+        reason = " ".join(reasons)
+
+        if index == 0 and len(scored_rows) > 1:
+            next_row = scored_rows[index + 1]
+            comparison = (
+                f"Ahead of {next_row['symbol']} because its overall signal is stronger: "
+                f"{active_vs_buy_text} versus buy-and-hold compared with {next_row['active_vs_buy_pct_text']}, "
+                f"and {confidence.lower()} confidence versus {str(next_row['confidence']).lower()} confidence."
+            )
+        elif index > 0:
+            prev_row = scored_rows[index - 1]
+            comparison = (
+                f"Trailing {prev_row['symbol']} because its current edge is weaker: "
+                f"{active_vs_buy_text} versus buy-and-hold compared with {prev_row['active_vs_buy_pct_text']}, "
+                f"with {confidence.lower()} confidence versus {str(prev_row['confidence']).lower()} confidence."
+            )
+        else:
+            comparison = "This ticker currently leads the list."
+
+        ranking_row = {
+            "rank": index + 1,
+            "symbol": symbol,
+            "ranking_score": float(row["score"]),
+            "reason": reason,
+            "comparison": comparison,
+        }
+        rankings.append(ranking_row)
+        ticker_payload[symbol]["priority_rank"] = index + 1
+        ticker_payload[symbol]["priority_reason"] = reason
+        ticker_payload[symbol]["comparison_summary"] = comparison
+        ticker_payload[symbol]["ranking_score"] = float(row["score"])
+    return rankings
+
+
 def _gap_bars_html(walkforward: pd.DataFrame) -> str:
     if walkforward.empty:
         return "<p><em>No walk-forward rows.</em></p>"
@@ -195,34 +316,51 @@ def render_experiment_report(
         sweep=sweep,
         selection_state=selection_state,
     )
+    headline_items = "".join(f"<li>{html.escape(line)}</li>" for line in headline_lines)
+    lineage_table = _table_html(_lineage_rows(lineage))
 
-    cards: list[str] = []
-    if not walkforward.empty:
-        frame = walkforward.copy()
-        frame["equity_gap"] = frame["policy_final_equity"].astype(float) - frame["buy_and_hold_equity"].astype(
-            float
+    walkforward_frame = walkforward.copy() if not walkforward.empty else pd.DataFrame()
+    avg_gap = None
+    avg_drawdown = None
+    best_fold_text = "n/a"
+    weakest_fold_text = "n/a"
+    walkforward_table = "<p><em>No walk-forward report provided.</em></p>"
+    if not walkforward_frame.empty:
+        walkforward_frame["equity_gap"] = walkforward_frame["policy_final_equity"].astype(float) - walkforward_frame[
+            "buy_and_hold_equity"
+        ].astype(float)
+        avg_gap = float(walkforward_frame["equity_gap"].mean())
+        if "diag_max_drawdown" in walkforward_frame.columns:
+            avg_drawdown = float(walkforward_frame["diag_max_drawdown"].astype(float).mean())
+        best_fold = walkforward_frame.sort_values("equity_gap", ascending=False).iloc[0]
+        worst_fold = walkforward_frame.sort_values("equity_gap", ascending=True).iloc[0]
+        best_fold_text = f"Fold {int(best_fold['fold_index'])} ({_format_pct(best_fold['equity_gap'])})"
+        weakest_fold_text = f"Fold {int(worst_fold['fold_index'])} ({_format_pct(worst_fold['equity_gap'])})"
+        walkforward_table = _table_html(
+            walkforward_frame[
+                [
+                    column
+                    for column in [
+                        "fold_index",
+                        "policy_final_equity",
+                        "buy_and_hold_equity",
+                        "equity_gap",
+                        "diag_max_drawdown",
+                    ]
+                    if column in walkforward_frame.columns
+                ]
+            ]
         )
-        cards.append(_metric_card("Walk-forward folds", len(frame)))
-        cards.append(_metric_card("Avg equity gap", _format_metric(frame["equity_gap"].mean())))
-        if "diag_max_drawdown" in frame.columns:
-            cards.append(_metric_card("Avg max drawdown", _format_pct(frame["diag_max_drawdown"].mean())))
-    if not ablation_summary.empty:
-        cards.append(_metric_card("Ablation variants", len(ablation_summary)))
-        best_variant = str(
-            ablation_summary.sort_values("avg_equity_gap", ascending=False).iloc[0]["variant"]
+
+    best_variant_text = "n/a"
+    ablation_intro = "No ablation summary provided."
+    if not ablation_summary.empty and "avg_equity_gap" in ablation_summary.columns:
+        best_variant = ablation_summary.sort_values("avg_equity_gap", ascending=False).iloc[0]
+        best_variant_text = str(best_variant.get("variant", "n/a"))
+        ablation_intro = (
+            f"Best ablation variant is {best_variant_text}, with average edge "
+            f"{_format_pct(best_variant.get('avg_equity_gap'))} versus buy-and-hold."
         )
-        cards.append(_metric_card("Best ablation variant", best_variant))
-    if not sweep.empty:
-        cards.append(_metric_card("Sweep settings", len(sweep)))
-        cards.append(
-            _metric_card(
-                "Top sweep delta",
-                _format_metric(float(sweep.iloc[0]["v2_minus_v1_like_avg_equity_gap"])),
-            )
-        )
-    if selection_state:
-        cards.append(_metric_card("Active model", selection_state.get("active_model_path")))
-        cards.append(_metric_card("Promotion decision", selection_state.get("promoted")))
 
     sweep_table = (
         _table_html(
@@ -242,6 +380,13 @@ def render_experiment_report(
         if not sweep.empty
         else "<p><em>No sweep report provided.</em></p>"
     )
+    top_sweep_text = "n/a"
+    if not sweep.empty and "v2_minus_v1_like_avg_equity_gap" in sweep.columns:
+        top_sweep = sweep.iloc[0]
+        top_sweep_text = (
+            f"{_format_pct(top_sweep.get('v2_minus_v1_like_avg_equity_gap'))} with downside "
+            f"{_format_metric(top_sweep.get('downside_penalty'))} and drawdown {_format_metric(top_sweep.get('drawdown_penalty'))}"
+        )
 
     selection_rows = selection_state.get("recent_rows", [])
     selection_table = (
@@ -249,8 +394,28 @@ def render_experiment_report(
         if selection_rows
         else "<p><em>No selection rows available.</em></p>"
     )
-    headline_items = "".join(f"<li>{html.escape(line)}</li>" for line in headline_lines)
-    lineage_table = _table_html(_lineage_rows(lineage))
+    active_model_text = str(selection_state.get("active_model_path", "n/a"))
+    promotion_text = (
+        "Promoted on this run" if bool(selection_state.get("promoted", False)) else "Previous model retained"
+    )
+    selection_reason = selection_state.get("regime_gate_reason") or "No additional gate reason recorded."
+
+    cards = [
+        _metric_card("Walk-forward windows", len(walkforward_frame) if not walkforward_frame.empty else "n/a"),
+        _metric_card("Average edge vs market", _format_pct(avg_gap) if avg_gap is not None else "n/a"),
+        _metric_card("Average drawdown", _format_pct(avg_drawdown) if avg_drawdown is not None else "n/a"),
+        _metric_card("Best fold", best_fold_text),
+        _metric_card("Weakest fold", weakest_fold_text),
+        _metric_card("Best ablation variant", best_variant_text),
+        _metric_card("Top sweep candidate", top_sweep_text),
+        _metric_card("Active model", active_model_text),
+    ]
+
+    takeaway_paragraph = (
+        headline_lines[0]
+        if headline_lines
+        else "This report is ready, but there are not enough loaded artifacts to produce a richer summary yet."
+    )
 
     document = f"""<!doctype html>
 <html lang="en">
@@ -258,22 +423,77 @@ def render_experiment_report(
   <meta charset="utf-8" />
   <title>{html.escape(title)}</title>
   <style>
-    body {{ font-family: Arial, sans-serif; margin: 24px; color: #222; }}
-    h1, h2 {{ margin-bottom: 8px; }}
-    .cards {{ display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0 18px 0; }}
-    .card {{ border: 1px solid #d9d9d9; border-radius: 8px; padding: 10px 12px; min-width: 180px; }}
-    .card-title {{ font-size: 12px; color: #666; }}
-    .card-value {{ font-size: 20px; font-weight: 600; margin-top: 4px; }}
-    .badge {{ display: inline-block; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }}
-    .badge-good {{ background: #dff4e5; color: #166534; }}
-    .badge-warn {{ background: #fde6e6; color: #991b1b; }}
-    .badge-neutral {{ background: #ececec; color: #333; }}
-    .summary-box {{ border: 1px solid #ddd; border-radius: 8px; padding: 10px 12px; margin-top: 12px; }}
-    .table-wrap {{ width: 100%; overflow-x: hidden; }}
-    table {{ border-collapse: collapse; width: 100%; margin-top: 10px; table-layout: fixed; }}
+    :root {{
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --panel-soft: #f8fbff;
+      --border: #d8e1ec;
+      --text: #0f172a;
+      --muted: #475569;
+      --blue: #2563eb;
+      --green: #15803d;
+      --green-soft: #dcfce7;
+      --amber: #b45309;
+      --amber-soft: #fef3c7;
+      --red: #b91c1c;
+      --red-soft: #fee2e2;
+      --shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; padding: 24px; font-family: Arial, sans-serif; background: var(--bg); color: var(--text); }}
+    h1, h2, h3 {{ margin: 0; }}
+    p {{ margin: 0; }}
+    code {{ background: #eff6ff; padding: 2px 5px; border-radius: 6px; }}
+    .hero {{
+      background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 100%);
+      color: #eff6ff;
+      border-radius: 22px;
+      padding: 24px;
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      box-shadow: var(--shadow);
+    }}
+    .eyebrow {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.85; }}
+    .hero h1 {{ margin-top: 8px; font-size: 32px; line-height: 1.1; }}
+    .hero-copy {{ margin-top: 12px; max-width: 760px; line-height: 1.7; color: rgba(239, 246, 255, 0.92); }}
+    .hero-meta {{
+      min-width: 260px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 18px;
+      padding: 16px;
+      line-height: 1.6;
+      font-size: 13px;
+    }}
+    .hero-meta strong {{ display: block; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.8; }}
+    .cards {{ display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 12px; margin-top: 18px; }}
+    .card, .surface {{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }}
+    .card-title {{ font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.06em; }}
+    .card-value {{ font-size: 22px; font-weight: 700; margin-top: 8px; line-height: 1.35; }}
+    .grid-2 {{ display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr); gap: 14px; margin-top: 18px; }}
+    .section {{ margin-top: 20px; }}
+    .section-head {{ display: flex; justify-content: space-between; align-items: end; gap: 10px; margin-bottom: 12px; }}
+    .section-head p {{ color: var(--muted); margin-top: 4px; }}
+    .summary-box {{ background: var(--panel); border: 1px solid var(--border); border-radius: 18px; padding: 18px; box-shadow: var(--shadow); }}
+    .summary-box ul {{ margin: 12px 0 0 20px; color: var(--muted); line-height: 1.7; }}
+    .status-row {{ margin-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }}
+    .badge {{ display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; }}
+    .badge-good {{ background: var(--green-soft); color: var(--green); }}
+    .badge-warn {{ background: var(--red-soft); color: var(--red); }}
+    .badge-neutral {{ background: #e2e8f0; color: #334155; }}
+    .muted {{ color: var(--muted); line-height: 1.6; }}
+    .table-wrap {{ width: 100%; overflow-x: auto; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 10px; background: #fff; border: 1px solid var(--border); }}
     th, td {{
-      border: 1px solid #ddd;
-      padding: 6px 8px;
+      border: 1px solid #e5edf7;
+      padding: 8px 10px;
       text-align: left;
       font-size: 13px;
       white-space: normal;
@@ -281,60 +501,141 @@ def render_experiment_report(
       word-break: break-word;
       vertical-align: top;
     }}
-    th {{ background: #f6f6f6; }}
-    .bar-row {{ display: flex; align-items: center; gap: 10px; margin: 6px 0; }}
-    .bar-label {{ width: 70px; font-size: 13px; color: #555; }}
-    .bar {{ height: 14px; border-radius: 3px; }}
-    .bar-value {{ width: 70px; text-align: right; font-family: monospace; font-size: 12px; }}
-    .section {{ margin-top: 24px; }}
+    th {{ background: #f8fafc; }}
+    .bar-row {{ display: flex; align-items: center; gap: 10px; margin: 8px 0; }}
+    .bar-label {{ width: 70px; font-size: 13px; color: var(--muted); }}
+    .bar {{ height: 16px; border-radius: 999px; }}
+    .bar-value {{ width: 90px; text-align: right; font-family: monospace; font-size: 12px; }}
+    details {{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px 16px;
+      margin-top: 12px;
+      box-shadow: var(--shadow);
+    }}
+    details summary {{ cursor: pointer; font-weight: 700; }}
+    .cheat-sheet {{ margin: 12px 0 0 20px; line-height: 1.7; color: var(--muted); }}
+    @media (max-width: 1100px) {{
+      body {{ padding: 16px; }}
+      .hero, .grid-2, .cards {{ grid-template-columns: 1fr; display: grid; }}
+      .hero {{ display: grid; }}
+    }}
   </style>
 </head>
 <body>
-  <h1>{html.escape(title)}</h1>
-  <div class="summary-box">
-    <h2>Plain-language summary</h2>
-    <p><strong>Overall status:</strong> {headline_badge}</p>
-    <ul>{headline_items}</ul>
-  </div>
-  <div class="section">
-    <h2>Run lineage</h2>
-    <p>Traceability tags for this report output.</p>
-    {lineage_table}
-  </div>
+  <section class="hero">
+    <div>
+      <div class="eyebrow">Standalone report</div>
+      <h1>{html.escape(title)}</h1>
+      <p class="hero-copy">This page turns the experiment outputs into a decision-friendly summary first, then keeps the full research detail available underneath for deeper inspection.</p>
+      <div class="status-row">
+        <span><strong>Plain-language summary</strong></span>
+        {headline_badge}
+      </div>
+      <p class="hero-copy" style="margin-top:10px;">{html.escape(takeaway_paragraph)}</p>
+    </div>
+    <div class="hero-meta">
+      <strong>Decision snapshot</strong>
+      <div>{html.escape(promotion_text)}</div>
+      <strong style="margin-top:10px;">Active model</strong>
+      <div>{html.escape(active_model_text)}</div>
+      <strong style="margin-top:10px;">Selection reason</strong>
+      <div>{html.escape(str(selection_reason))}</div>
+    </div>
+  </section>
+
   <div class="cards">{''.join(cards) if cards else '<p><em>No artifacts loaded.</em></p>'}</div>
-  <div class="section">
-    <h2>Walk-forward equity gaps</h2>
-    <p>Each bar shows how much the policy beat or missed buy-and-hold in that fold. Green is better than baseline; red is worse.</p>
-    {_gap_bars_html(walkforward)}
+
+  <div class="grid-2">
+    <section class="summary-box">
+      <div class="section-head">
+        <div>
+          <h2>Plain-language summary</h2>
+          <p>What this run means without requiring RL jargon.</p>
+        </div>
+      </div>
+      <ul>{headline_items}</ul>
+    </section>
+    <section class="surface">
+      <div class="section-head">
+        <div>
+          <h2>Run lineage</h2>
+          <p>Traceability tags for this report output.</p>
+        </div>
+      </div>
+      {lineage_table}
+    </section>
   </div>
-  <div class="section">
-    <h2>Ablation summary</h2>
-    <p>This table compares baseline (v1-like control) and v2 under the same folds. Focus on <code>avg_equity_gap</code>.</p>
+
+  <section class="section surface">
+    <div class="section-head">
+      <div>
+        <h2>Walk-forward equity gaps</h2>
+        <p>Green folds beat buy-and-hold. Red folds lagged it.</p>
+      </div>
+    </div>
+    {_gap_bars_html(walkforward_frame)}
+  </section>
+
+  <div class="grid-2">
+    <section class="surface">
+      <div class="section-head">
+        <div>
+          <h2>What the fold history says</h2>
+          <p>Use this as the first checkpoint for whether the model has repeatable edge.</p>
+        </div>
+      </div>
+      <p class="muted">Best fold: <strong>{html.escape(best_fold_text)}</strong>. Weakest fold: <strong>{html.escape(weakest_fold_text)}</strong>.</p>
+      {walkforward_table}
+    </section>
+    <section class="surface">
+      <div class="section-head">
+        <div>
+          <h2>Selection decision details</h2>
+          <p>The latest model-choice context used by the pipeline.</p>
+        </div>
+      </div>
+      <p class="muted"><strong>Decision:</strong> {html.escape(promotion_text)}</p>
+      <p class="muted" style="margin-top:8px;"><strong>Reason:</strong> {html.escape(str(selection_reason))}</p>
+      {selection_table}
+    </section>
+  </div>
+
+  <section class="section surface">
+    <div class="section-head">
+      <div>
+        <h2>Ablation summary</h2>
+        <p>{html.escape(ablation_intro)}</p>
+      </div>
+    </div>
     {_table_html(ablation_summary) if not ablation_summary.empty else "<p><em>No ablation summary provided.</em></p>"}
-  </div>
-  <div class="section">
-    <h2>Sweep ranking (top 15)</h2>
-    <p>These are penalty settings ranked by v2 improvement over v1-like control. Top row is your current best candidate.</p>
+  </section>
+
+  <section class="section surface">
+    <div class="section-head">
+      <div>
+        <h2>Sweep ranking (top 15)</h2>
+        <p>These are the best penalty settings to investigate next.</p>
+      </div>
+    </div>
+    <p class="muted">Top current candidate: <strong>{html.escape(top_sweep_text)}</strong>.</p>
     {sweep_table}
-  </div>
-  <div class="section">
-    <h2>Selection decision details</h2>
-    {selection_table}
-  </div>
-  <div class="section">
-    <h2>Metric cheat sheet</h2>
-    <ul>
-      <li><strong>equity gap</strong>: policy final equity minus buy-and-hold final equity (positive is good).</li>
-      <li><strong>max drawdown</strong>: worst peak-to-trough decline; lower is safer.</li>
-      <li><strong>turbulent metrics</strong>: performance only on higher-volatility periods.</li>
-      <li><strong>sweep delta</strong>: how much v2 outperforms (or underperforms) v1-like under a penalty setting.</li>
-      <li><strong>win rate</strong>: fraction of positive-reward steps (higher is better, but not enough alone).</li>
-      <li><strong>equity factor</strong>: compounded growth over a slice; above 1.0 means net growth.</li>
-      <li><strong>turnover</strong>: how much position changed step-to-step; high turnover can imply overtrading.</li>
-      <li><strong>turbulent share</strong>: fraction of steps classified as higher-volatility regime.</li>
-      <li><strong>ablation</strong>: controlled A/B comparison where v1-like and v2 are run on identical folds.</li>
+  </section>
+
+  <details>
+    <summary>Metric cheat sheet</summary>
+    <ul class="cheat-sheet">
+      <li><strong>equity gap</strong>: policy final equity minus buy-and-hold final equity, so positive values mean the policy finished ahead.</li>
+      <li><strong>max drawdown</strong>: worst peak-to-trough decline; lower is easier to live with.</li>
+      <li><strong>turbulent metrics</strong>: performance only during higher-volatility periods.</li>
+      <li><strong>sweep delta</strong>: how much v2 outperforms or underperforms the v1-like setup under one penalty configuration.</li>
+      <li><strong>win rate</strong>: share of positive-reward steps. Useful, but not enough on its own.</li>
+      <li><strong>equity factor</strong>: compounded growth across a slice; above <code>1.0</code> means net growth.</li>
+      <li><strong>turnover</strong>: how much the position changed step to step; high turnover can mean overtrading.</li>
+      <li><strong>ablation</strong>: a controlled A/B comparison where v1-like and v2 are run on identical folds.</li>
     </ul>
-  </div>
+  </details>
 </body>
 </html>
 """
@@ -398,6 +699,7 @@ def render_ticker_tabs_report(
             "label": board_name,
             "group": "Leaderboards",
             "src": normalized_leaderboards[board_name],
+            "description": f"{board_name} helps you compare multiple symbols or profiles from a single page.",
         }
         entries.append(item)
         leaderboard_entries.append(item)
@@ -407,6 +709,7 @@ def render_ticker_tabs_report(
             "label": ticker,
             "group": "Tickers",
             "src": normalized_tickers[ticker],
+            "description": f"{ticker} is a focused deep-dive report for one symbol.",
         }
         entries.append(item)
         ticker_entries.append(item)
@@ -434,45 +737,153 @@ def render_ticker_tabs_report(
   <meta charset="utf-8" />
   <title>{html.escape(title)}</title>
   <style>
-    body {{ font-family: Arial, sans-serif; margin: 0; color: #222; background: #fafafa; }}
-    .layout {{ display: grid; grid-template-columns: 300px 1fr; height: 100vh; }}
-    .sidebar {{ border-right: 1px solid #ddd; padding: 14px; background: #fff; overflow-y: auto; }}
-    .content {{ padding: 14px; }}
-    h1 {{ margin: 0 0 10px 0; font-size: 20px; }}
-    .subtle {{ color: #666; font-size: 12px; margin-bottom: 10px; }}
-    .controls {{ display: grid; gap: 8px; margin-bottom: 10px; }}
+    :root {{
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --border: #d8e1ec;
+      --text: #0f172a;
+      --muted: #475569;
+      --nav: #0f172a;
+      --nav-soft: #1e293b;
+      --blue: #2563eb;
+      --blue-soft: #dbeafe;
+      --shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: Arial, sans-serif; color: var(--text); background: var(--bg); }}
+    .layout {{ display: grid; grid-template-columns: 310px 1fr; min-height: 100vh; }}
+    .sidebar {{
+      background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
+      color: #e2e8f0;
+      padding: 20px 16px;
+      border-right: 1px solid rgba(148, 163, 184, 0.15);
+      overflow-y: auto;
+    }}
+    .brand {{ font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }}
+    .brand-copy {{ margin-top: 8px; font-size: 13px; line-height: 1.6; color: #cbd5e1; }}
+    .controls {{ margin-top: 18px; display: grid; gap: 10px; }}
     .controls input {{
       width: 100%;
       box-sizing: border-box;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-      padding: 6px 8px;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      border-radius: 12px;
+      padding: 10px 12px;
       font-size: 13px;
+      background: rgba(15, 23, 42, 0.35);
+      color: #e2e8f0;
     }}
-    .group-title {{ font-size: 12px; font-weight: 700; color: #555; margin: 10px 0 6px 0; text-transform: uppercase; letter-spacing: 0.03em; }}
-    .report-grid {{ display: grid; gap: 6px; }}
+    .controls input::placeholder {{ color: #94a3b8; }}
+    .nav-stats {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }}
+    .nav-stat {{
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 14px;
+      padding: 10px 12px;
+      background: rgba(30, 41, 59, 0.8);
+    }}
+    .nav-stat .k {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; }}
+    .nav-stat .v {{ margin-top: 6px; font-size: 20px; font-weight: 700; color: #eff6ff; }}
+    .group-title {{ font-size: 11px; font-weight: 700; color: #94a3b8; margin: 16px 0 8px 0; text-transform: uppercase; letter-spacing: 0.08em; }}
+    .report-grid {{ display: grid; gap: 8px; }}
     .report-button {{
       text-align: left;
-      border: 1px solid #d9d9d9;
-      background: #f6f6f6;
-      border-radius: 6px;
-      padding: 6px 8px;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      background: rgba(30, 41, 59, 0.8);
+      color: #dbeafe;
+      border-radius: 12px;
+      padding: 10px 12px;
       cursor: pointer;
       font-size: 13px;
-      font-weight: 600;
+      font-weight: 700;
     }}
-    .report-button.active {{ background: #dfeeff; border-color: #7ea9ff; }}
-    .content-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }}
-    .chip {{ border: 1px solid #d7d7d7; border-radius: 999px; padding: 3px 8px; font-size: 12px; background: #fff; color: #555; }}
-    iframe {{ width: 100%; height: calc(100vh - 90px); border: 1px solid #ddd; border-radius: 8px; background: #fff; }}
+    .report-button.active {{ background: var(--blue); color: #fff; }}
+    .content {{ padding: 22px; overflow: auto; }}
+    .hero {{
+      background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 100%);
+      color: #eff6ff;
+      border-radius: 22px;
+      padding: 24px;
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      box-shadow: var(--shadow);
+    }}
+    .eyebrow {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.85; }}
+    .hero h1 {{ margin: 8px 0 10px 0; font-size: 30px; line-height: 1.1; }}
+    .hero-copy {{ margin: 0; max-width: 760px; font-size: 15px; line-height: 1.6; color: rgba(239, 246, 255, 0.92); }}
+    .hero-meta {{
+      min-width: 240px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 18px;
+      padding: 16px;
+      font-size: 13px;
+      line-height: 1.6;
+    }}
+    .hero-meta strong {{ display: block; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.8; }}
+    .summary-grid {{ display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 12px; margin-top: 16px; }}
+    .surface {{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }}
+    .metric-k {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }}
+    .metric-v {{ margin-top: 8px; font-size: 24px; font-weight: 700; }}
+    .metric-copy {{ margin-top: 6px; color: var(--muted); line-height: 1.5; }}
+    .viewer {{ margin-top: 18px; }}
+    .viewer-head {{
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 14px;
+    }}
+    .viewer-head h2 {{ margin: 6px 0 0 0; font-size: 26px; }}
+    .viewer-copy {{ margin-top: 10px; max-width: 760px; color: var(--muted); line-height: 1.6; }}
+    .chip {{
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid #bfdbfe;
+      background: var(--blue-soft);
+      color: var(--blue);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .viewer-actions {{ display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }}
+    .link-button {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 14px;
+      border-radius: 12px;
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      color: var(--blue);
+      text-decoration: none;
+      font-weight: 700;
+    }}
+    iframe {{ width: 100%; height: calc(100vh - 280px); min-height: 520px; border: 1px solid var(--border); border-radius: 18px; background: #fff; }}
+    @media (max-width: 1100px) {{
+      .layout {{ grid-template-columns: 1fr; }}
+      .sidebar {{ border-right: none; border-bottom: 1px solid rgba(148, 163, 184, 0.15); }}
+      .hero, .viewer-head, .summary-grid {{ display: grid; grid-template-columns: 1fr; }}
+      iframe {{ height: 70vh; }}
+    }}
   </style>
 </head>
 <body>
   <div class="layout">
     <aside class="sidebar">
-      <h1>{html.escape(title)}</h1>
-      <div class="subtle">Unified workspace for leaderboards and per-ticker reports.</div>
+      <div class="brand">{html.escape(title)}</div>
+      <div class="brand-copy">This workspace keeps every leaderboard and ticker report in one place. Start with leaderboards for the broad picture, then open ticker pages for the deeper story.</div>
       <div class="controls">
+        <div class="nav-stats">
+          <div class="nav-stat"><div class="k">Leaderboards</div><div class="v">{len(leaderboard_entries)}</div></div>
+          <div class="nav-stat"><div class="k">Tickers</div><div class="v">{len(ticker_entries)}</div></div>
+        </div>
         <input id="report-search" placeholder="Filter reports..." oninput="filterReports()" />
       </div>
       <div id="leaderboard-section" class="section-group">
@@ -485,11 +896,48 @@ def render_ticker_tabs_report(
       </div>
     </aside>
     <main class="content">
-      <div class="content-header">
-        <div><strong id="active-report-label"></strong></div>
-        <span id="active-report-group" class="chip"></span>
+      <section class="hero">
+        <div>
+          <div class="eyebrow">Workspace</div>
+          <h1>Research workspace</h1>
+          <p class="hero-copy">Use leaderboards to compare tickers or profiles at a glance. Use ticker pages when you want the full supporting context behind one symbol.</p>
+        </div>
+        <div class="hero-meta">
+          <strong>Start here</strong>
+          <div>If you want the biggest-picture answer first, open a leaderboard. If you already know the symbol you care about, jump straight to its ticker page.</div>
+        </div>
+      </section>
+      <div class="summary-grid">
+        <div class="surface">
+          <div class="metric-k">Current view</div>
+          <div id="active-report-label" class="metric-v"></div>
+          <div id="active-report-description" class="metric-copy"></div>
+        </div>
+        <div class="surface">
+          <div class="metric-k">View type</div>
+          <div id="active-report-group" class="metric-v">n/a</div>
+          <div class="metric-copy">Leaderboards compare many items. Ticker pages zoom in on one symbol.</div>
+        </div>
+        <div class="surface">
+          <div class="metric-k">How to use it</div>
+          <div class="metric-v">Choose a view</div>
+          <div class="metric-copy">Use the left sidebar to move between cross-symbol summaries and detailed ticker pages.</div>
+        </div>
       </div>
-      <iframe id="report-frame" title="Dashboard report"></iframe>
+      <section class="viewer surface">
+        <div class="viewer-head">
+          <div>
+            <div class="eyebrow">Preview</div>
+            <h2 id="viewer-title"></h2>
+            <p id="viewer-copy" class="viewer-copy"></p>
+          </div>
+          <div class="viewer-actions">
+            <span id="viewer-group-chip" class="chip">n/a</span>
+            <a id="open-report-link" class="link-button" href="#" target="_blank" rel="noopener noreferrer">Open in new tab</a>
+          </div>
+        </div>
+        <iframe id="report-frame" title="Dashboard report"></iframe>
+      </section>
     </main>
   </div>
   <script>
@@ -509,6 +957,11 @@ def render_ticker_tabs_report(
       frame.src = entry.src;
       document.getElementById('active-report-label').textContent = entry.label;
       document.getElementById('active-report-group').textContent = entry.group;
+      document.getElementById('active-report-description').textContent = entry.description || '';
+      document.getElementById('viewer-title').textContent = entry.label;
+      document.getElementById('viewer-copy').textContent = entry.description || '';
+      document.getElementById('viewer-group-chip').textContent = entry.group;
+      document.getElementById('open-report-link').href = entry.src;
       setActiveButton(reportId);
     }}
 
@@ -516,7 +969,8 @@ def render_ticker_tabs_report(
       const query = document.getElementById('report-search').value.trim().toLowerCase();
       document.querySelectorAll('.report-button').forEach((button) => {{
         const label = (button.dataset.label || '').toLowerCase();
-        const matchesText = !query || label.includes(query);
+        const group = (button.dataset.group || '').toLowerCase();
+        const matchesText = !query || label.includes(query) || group.includes(query);
         button.style.display = matchesText ? '' : 'none';
       }});
       ['leaderboard-section', 'ticker-section'].forEach((sectionId) => {{
@@ -611,6 +1065,10 @@ def render_product_dashboard(
         regime = str(row.get("ensemble_regime", "") or "")
         action = str(row.get("recommended_action", ""))
         summary_text = str(row.get("summary", ""))
+        recommendation = str(row.get("recommendation", "") or "").strip()
+        recommendation_subtitle = str(row.get("recommendation_subtitle", "") or "").strip()
+        confidence = str(row.get("confidence", "") or "").strip()
+        what_to_watch = str(row.get("what_to_watch", "") or "").strip()
         active_vs_buy = str(row.get("active_vs_buy_and_hold", "n/a"))
         active_vs_base = str(row.get("active_vs_base", "n/a"))
         active_rank = int(row.get("active_rank")) if pd.notna(row.get("active_rank")) else None
@@ -619,6 +1077,47 @@ def render_product_dashboard(
             if pd.notna(row.get("ensemble_confidence"))
             else None
         )
+        active_vs_buy_value = _parse_pct_text(active_vs_buy)
+        active_vs_base_value = _parse_pct_text(active_vs_base)
+
+        if not recommendation:
+            if status == "Healthy" and (active_vs_buy_value is not None and active_vs_buy_value > 0):
+                recommendation = "Improving trend"
+            elif status == "Watch":
+                recommendation = "Caution"
+            elif status == "Critical":
+                recommendation = "Avoid for now"
+            else:
+                recommendation = "Mixed trend"
+        if not recommendation_subtitle:
+            recommendation_subtitle = (
+                "positive and stable"
+                if recommendation == "Bullish setup"
+                else "positive, but still proving itself"
+                if recommendation == "Improving trend"
+                else "promise is there, but warning flags are active"
+                if recommendation == "Caution"
+                else "signals are mixed and not confirmed"
+                if recommendation == "Mixed trend"
+                else "edge is weak or deteriorating"
+            )
+        if not confidence:
+            if ensemble_confidence is not None:
+                confidence = (
+                    "High"
+                    if ensemble_confidence >= 0.75
+                    else "Medium"
+                    if ensemble_confidence >= 0.55
+                    else "Low"
+                )
+            elif status == "Healthy":
+                confidence = "Medium"
+            elif status == "Watch":
+                confidence = "Medium"
+            else:
+                confidence = "Low"
+        if not what_to_watch:
+            what_to_watch = action or "Watch the next daily update for clearer confirmation."
 
         symbol_health = health[health["symbol"] == symbol].sort_values("run_timestamp_utc")
         gap_series = [
@@ -663,6 +1162,9 @@ def render_product_dashboard(
         ticker_payload[symbol] = {
             "symbol": symbol,
             "status": status,
+            "recommendation": recommendation,
+            "recommendation_subtitle": recommendation_subtitle,
+            "confidence": confidence,
             "selected_profile": selected_profile,
             "active_profile": active_profile,
             "active_profile_source": source,
@@ -670,9 +1172,12 @@ def render_product_dashboard(
             "ensemble_confidence": ensemble_confidence,
             "active_rank": active_rank,
             "active_vs_buy_pct_text": active_vs_buy,
+            "active_vs_buy_pct_value": active_vs_buy_value,
             "active_vs_base_pct_text": active_vs_base,
+            "active_vs_base_pct_value": active_vs_base_value,
             "action": action,
             "summary": summary_text,
+            "what_to_watch": what_to_watch,
             "outlook": outlook,
             "momentum": momentum,
             "history": [
@@ -701,6 +1206,8 @@ def render_product_dashboard(
                 "confidence": ensemble_confidence,
             }
         )
+
+    ranking_payload = _build_ticker_rankings(ticker_payload)
 
     dense_links: list[dict[str, str]] = []
     report_label_to_raw: dict[str, str | Path] = {}
@@ -1121,6 +1628,16 @@ def render_product_dashboard(
         )
         for ticker in tickers_sorted
     )
+    latest_health_run = None
+    if "run_timestamp_utc" in health.columns:
+        health_runs = sorted(
+            {
+                str(value)
+                for value in health["run_timestamp_utc"].tolist()
+                if str(value).strip()
+            }
+        )
+        latest_health_run = health_runs[-1] if health_runs else None
 
     document = f"""<!doctype html>
 <html lang="en">
@@ -1128,176 +1645,570 @@ def render_product_dashboard(
   <meta charset="utf-8" />
   <title>{html.escape(title)}</title>
   <style>
-    body {{ margin: 0; font-family: Arial, sans-serif; color: #1f2937; background: #f5f7fb; }}
-    .layout {{ display: grid; grid-template-columns: 250px 1fr; height: 100vh; }}
-    .side {{ background: #101828; color: #e2e8f0; padding: 14px; overflow-y: auto; }}
-    .brand {{ font-size: 14px; font-weight: 700; margin-bottom: 12px; opacity: 0.9; }}
-    .nav-button {{
-      width: 100%; text-align: left; padding: 8px 10px; border: none; border-radius: 8px;
-      margin-bottom: 6px; cursor: pointer; color: #dbeafe; background: #1f2937; font-weight: 600;
+    :root {{
+      color-scheme: light;
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --panel-soft: #f8fbff;
+      --border: #d8e1ec;
+      --text: #0f172a;
+      --muted: #475569;
+      --nav: #0f172a;
+      --nav-soft: #1e293b;
+      --blue: #2563eb;
+      --blue-soft: #dbeafe;
+      --green: #15803d;
+      --green-soft: #dcfce7;
+      --amber: #b45309;
+      --amber-soft: #fef3c7;
+      --red: #b91c1c;
+      --red-soft: #fee2e2;
+      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
     }}
-    .nav-button.active {{ background: #2563eb; color: #fff; }}
-    .main {{ padding: 14px; overflow: auto; }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: Arial, sans-serif; color: var(--text); background: var(--bg); }}
+    a {{ color: var(--blue); }}
+    .layout {{ display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }}
+    .side {{
+      background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
+      color: #e2e8f0;
+      padding: 20px 16px;
+      border-right: 1px solid rgba(148, 163, 184, 0.15);
+    }}
+    .brand {{ font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }}
+    .brand-copy {{ margin-top: 8px; font-size: 13px; line-height: 1.5; color: #cbd5e1; }}
+    .nav-section {{ margin-top: 18px; }}
+    .nav-label {{
+      margin: 0 0 8px 0;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #94a3b8;
+    }}
+    .nav-button {{
+      width: 100%;
+      text-align: left;
+      padding: 10px 12px;
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      border-radius: 12px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      color: #dbeafe;
+      background: rgba(30, 41, 59, 0.8);
+      font-weight: 600;
+    }}
+    .nav-button.active {{ background: var(--blue); color: #fff; border-color: rgba(255, 255, 255, 0.12); }}
+    .main {{ padding: 22px; overflow: auto; }}
     .panel {{ display: none; }}
     .panel.active {{ display: block; }}
-    #system-panel {{ height: calc(100vh - 28px); display: flex; flex-direction: column; gap: 10px; }}
-    .shadow-panel {{ background: #fff; border: 1px solid #dbe1ea; border-radius: 10px; padding: 10px; }}
-    .shadow-head {{ display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
-    .shadow-status {{ font-size: 13px; font-weight: 700; border-radius: 999px; padding: 4px 10px; }}
-    .shadow-status.pass {{ background: #dcfce7; color: #166534; }}
-    .shadow-status.fail {{ background: #fee2e2; color: #991b1b; }}
-    .shadow-status.inactive {{ background: #e2e8f0; color: #334155; }}
-    .shadow-meta {{ margin-top: 6px; font-size: 13px; color: #475569; }}
-    .shadow-failing {{ margin-top: 4px; font-size: 12px; color: #7c2d12; }}
-    .shadow-suggestion {{ margin-top: 6px; font-size: 12px; color: #334155; }}
-    .shadow-table-wrap {{ margin-top: 8px; }}
-    .shadow-table-wrap th, .shadow-table-wrap td {{ font-size: 12px; }}
-    .delta-panel {{ background: #fff; border: 1px solid #dbe1ea; border-radius: 10px; padding: 10px; }}
-    .delta-head {{ display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
-    .delta-sub {{ margin-top: 6px; font-size: 12px; color: #475569; }}
-    .delta-grid {{ margin-top: 8px; display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 8px; }}
-    .delta-item {{ background: #f8fafc; border: 1px solid #e5eaf0; border-radius: 8px; padding: 8px; }}
-    .delta-item .k {{ font-size: 11px; color: #64748b; text-transform: uppercase; }}
-    .delta-item .v {{ margin-top: 4px; font-size: 14px; font-weight: 700; }}
-    .delta-table-wrap {{ margin-top: 8px; }}
-    .delta-table-wrap th, .delta-table-wrap td {{ font-size: 12px; }}
-    #system-svg {{ width: 100%; flex: 1; min-height: 320px; background: #0b1220; border-radius: 10px; }}
-    .ticker-header {{ display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
-    .ticker-name {{ font-size: 22px; font-weight: 700; }}
-    .chip {{ border: 1px solid #d0d7e2; border-radius: 999px; padding: 4px 10px; background: #fff; font-size: 12px; }}
-    .cards {{ display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 8px; margin-top: 10px; }}
-    .card {{ background: #fff; border: 1px solid #dbe1ea; border-radius: 8px; padding: 10px; }}
-    .label {{ font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }}
-    .value {{ font-size: 18px; font-weight: 700; margin-top: 3px; }}
-    .tabs {{ display: flex; gap: 8px; margin-top: 14px; }}
-    .tab-btn {{ border: 1px solid #dbe1ea; background: #fff; border-radius: 8px; padding: 6px 10px; cursor: pointer; font-weight: 600; }}
-    .tab-btn.active {{ background: #dbeafe; border-color: #93c5fd; }}
-    .tab-panel {{ display: none; margin-top: 10px; }}
-    .tab-panel.active {{ display: block; }}
-    .chart-wrap {{ background: #fff; border: 1px solid #dbe1ea; border-radius: 8px; padding: 8px; }}
-    #ticker-chart {{ width: 100%; height: 230px; }}
-    table {{ width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #dbe1ea; border-radius: 8px; overflow: hidden; }}
-    th, td {{ border: 1px solid #e5eaf0; padding: 6px 8px; text-align: left; font-size: 13px; }}
+    .hero {{
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: flex-start;
+      background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 100%);
+      color: #eff6ff;
+      border-radius: 22px;
+      padding: 24px;
+      box-shadow: var(--shadow);
+    }}
+    .eyebrow {{
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      opacity: 0.85;
+    }}
+    .hero h1, .hero h2 {{ margin: 8px 0 10px 0; font-size: 30px; line-height: 1.1; }}
+    .hero-copy {{ margin: 0; max-width: 760px; font-size: 15px; line-height: 1.6; color: rgba(239, 246, 255, 0.92); }}
+    .hero-meta {{
+      min-width: 220px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 18px;
+      padding: 16px;
+      font-size: 13px;
+      line-height: 1.6;
+    }}
+    .hero-meta strong {{ display: block; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.8; }}
+    .summary-grid, .detail-metrics, .system-grid {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(160px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }}
+    .surface {{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }}
+    .surface-soft {{ background: var(--panel-soft); }}
+    .kicker {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }}
+    .metric-value {{ margin-top: 8px; font-size: 28px; font-weight: 700; letter-spacing: -0.03em; }}
+    .metric-sub {{ margin-top: 6px; font-size: 13px; line-height: 1.5; color: var(--muted); }}
+    .section-head {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: end;
+      margin-top: 26px;
+      margin-bottom: 12px;
+    }}
+    .section-head h3 {{ margin: 0; font-size: 22px; }}
+    .section-head p {{ margin: 4px 0 0 0; color: var(--muted); }}
+    .overview-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 14px;
+    }}
+    .overview-toolbar {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: end;
+      margin-bottom: 12px;
+    }}
+    .overview-filter-bar {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+    .filter-chip {{
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--text);
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }}
+    .filter-chip.active {{
+      border-color: #93c5fd;
+      background: #eff6ff;
+      color: #1d4ed8;
+    }}
+    .search-group {{ min-width: min(280px, 100%); }}
+    .search-input {{
+      width: min(320px, 100%);
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #fff;
+      color: var(--text);
+    }}
+    .overview-results-copy {{ margin: 0 0 14px 0; color: var(--muted); line-height: 1.6; }}
+    .ranking-table-wrap {{ margin-top: 12px; }}
+    .ranking-note {{ margin: 0; color: var(--muted); line-height: 1.6; }}
+    .comparison-copy {{ margin: 0; color: #334155; line-height: 1.6; }}
+    .ticker-card {{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+      display: grid;
+      gap: 14px;
+    }}
+    .ticker-card-top {{
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+    }}
+    .ticker-card-symbol {{ font-size: 24px; font-weight: 700; letter-spacing: -0.03em; }}
+    .ticker-card-rank {{ margin-top: 4px; font-size: 13px; color: var(--muted); }}
+    .badge-row {{ display: flex; flex-wrap: wrap; gap: 8px; }}
+    .badge {{
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }}
+    .badge-shortlist, .badge-healthy, .shadow-status.pass {{ background: var(--green-soft); color: var(--green); }}
+    .badge-constructive, .badge-medium, .badge-overview {{ background: var(--blue-soft); color: var(--blue); }}
+    .badge-watch, .badge-watch-closely, .shadow-status.fail {{ background: var(--amber-soft); color: var(--amber); }}
+    .badge-hold-off, .badge-critical {{ background: var(--red-soft); color: var(--red); }}
+    .badge-low, .shadow-status.inactive {{ background: #e2e8f0; color: #334155; }}
+    .metric-strip {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      background: #f8fafc;
+      border: 1px solid #e5edf7;
+      border-radius: 14px;
+      padding: 12px;
+    }}
+    .metric-strip .item-label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; }}
+    .metric-strip .item-value {{ margin-top: 5px; font-size: 18px; font-weight: 700; }}
+    .ticker-card-copy, .body-copy {{ margin: 0; color: var(--muted); line-height: 1.6; }}
+    .ticker-card-signal {{ margin: 0; color: #1e3a8a; font-weight: 700; line-height: 1.5; }}
+    .watch-box {{
+      background: #f8fbff;
+      border: 1px solid #dbeafe;
+      color: #1e3a8a;
+      border-radius: 14px;
+      padding: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }}
+    .card-actions {{ display: flex; gap: 10px; flex-wrap: wrap; }}
+    .primary-button, .ghost-button, .link-button {{
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }}
+    .primary-button {{ border: 1px solid var(--blue); background: var(--blue); color: #fff; }}
+    .ghost-button {{ border: 1px solid var(--border); background: #fff; color: var(--text); }}
+    .link-button {{ border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8; }}
+    .ticker-toolbar {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      margin-bottom: 16px;
+    }}
+    .ticker-title {{ font-size: 32px; font-weight: 700; letter-spacing: -0.03em; margin: 8px 0 0 0; }}
+    .ticker-subtitle {{ margin: 10px 0 0 0; max-width: 760px; line-height: 1.6; color: var(--muted); }}
+    .signal-subtitle {{ margin: 10px 0 0 0; color: #1e3a8a; font-weight: 700; line-height: 1.5; }}
+    .detail-grid {{
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+      gap: 14px;
+      margin-top: 14px;
+    }}
+    .chart-wrap {{ background: #fff; border: 1px solid var(--border); border-radius: 18px; padding: 16px; box-shadow: var(--shadow); }}
+    #ticker-chart {{ width: 100%; height: 260px; }}
+    table {{ width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }}
+    th, td {{ border: 1px solid #e5edf7; padding: 8px 10px; text-align: left; font-size: 13px; }}
     th {{ background: #f8fafc; }}
-    details {{ background: #fff; border: 1px solid #dbe1ea; border-radius: 8px; padding: 8px; margin-top: 8px; }}
-    details summary {{ cursor: pointer; font-weight: 600; }}
-    .report-list a {{ display: block; margin-top: 6px; color: #1d4ed8; text-decoration: none; }}
-    .preview {{ margin-top: 8px; }}
-    .preview iframe {{ width: 100%; height: 420px; border: 1px solid #dbe1ea; border-radius: 8px; }}
+    .report-list a {{ display: block; margin-top: 8px; color: var(--blue); text-decoration: none; }}
+    .preview {{ margin-top: 12px; }}
+    .preview iframe {{ width: 100%; height: 420px; border: 1px solid var(--border); border-radius: 14px; }}
+    .select-input {{
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #fff;
+    }}
+    .details-note {{ margin-top: 12px; }}
+    details {{ background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 12px; }}
+    details summary {{ cursor: pointer; font-weight: 700; }}
+    #system-panel .hero {{ margin-bottom: 4px; }}
+    .shadow-panel, .delta-panel {{ background: #fff; border: 1px solid var(--border); border-radius: 18px; padding: 18px; box-shadow: var(--shadow); }}
+    .shadow-head, .delta-head {{ display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
+    .shadow-status {{ font-size: 13px; font-weight: 700; border-radius: 999px; padding: 6px 12px; }}
+    .shadow-meta, .shadow-failing, .shadow-suggestion, .delta-sub {{ margin-top: 8px; font-size: 13px; line-height: 1.6; color: var(--muted); }}
+    .shadow-table-wrap, .delta-table-wrap {{ margin-top: 10px; }}
+    .delta-grid {{ margin-top: 12px; display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 10px; }}
+    .delta-item {{ background: #f8fafc; border: 1px solid #e5edf7; border-radius: 14px; padding: 12px; }}
+    .delta-item .k {{ font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.06em; }}
+    .delta-item .v {{ margin-top: 6px; font-size: 15px; font-weight: 700; line-height: 1.4; }}
+    #system-svg {{ width: 100%; height: 420px; background: #0b1220; border-radius: 18px; box-shadow: var(--shadow); }}
+    .system-links {{ display: grid; gap: 8px; }}
+    .system-links a {{ color: var(--blue); text-decoration: none; }}
+    .footnote {{ margin-top: 20px; font-size: 12px; color: #64748b; line-height: 1.6; }}
+    @media (max-width: 1100px) {{
+      .layout {{ grid-template-columns: 1fr; }}
+      .side {{ border-right: none; border-bottom: 1px solid rgba(148, 163, 184, 0.15); }}
+      .hero, .ticker-toolbar, .section-head {{ flex-direction: column; }}
+      .summary-grid, .detail-metrics, .system-grid, .detail-grid, .delta-grid {{ grid-template-columns: 1fr; }}
+    }}
   </style>
 </head>
 <body>
   <div class="layout">
     <aside class="side">
       <div class="brand">{html.escape(title)}</div>
-      <button id="nav-system" class="nav-button active" onclick="showSystem()">SYSTEM</button>
-      {nav_buttons}
+      <div class="brand-copy">Plain-language view of the daily RL pipeline. Start with the shortlist, then open a ticker for details or the system view for diagnostics.</div>
+      <div class="nav-section">
+        <div class="nav-label">Views</div>
+        <button id="nav-overview" class="nav-button active" onclick="showOverview()">Overview</button>
+        <button id="nav-system" class="nav-button" onclick="showSystem()">SYSTEM</button>
+      </div>
+      <div class="nav-section">
+        <div class="nav-label">Tickers</div>
+        {nav_buttons}
+      </div>
     </aside>
     <main class="main">
-      <section id="system-panel" class="panel active">
-        <div class="shadow-panel">
-          <div class="shadow-head">
-            <div class="label">Shadow gate</div>
-            <div id="shadow-status" class="shadow-status inactive">Inactive</div>
+      <section id="overview-panel" class="panel active">
+        <div class="hero">
+          <div>
+            <div class="eyebrow">Daily market view</div>
+            <h1>Today's ticker shortlist</h1>
+            <p class="hero-copy">This page translates the research pipeline into a simple working view: which names look strongest right now, which need caution, and what you should watch on the next daily update.</p>
           </div>
-          <div id="shadow-meta" class="shadow-meta"></div>
-          <div id="shadow-failing" class="shadow-failing"></div>
-          <div id="shadow-suggestion" class="shadow-suggestion"></div>
-          <details id="shadow-details" class="shadow-table-wrap">
-            <summary>Per-symbol shadow agreement</summary>
-            <table>
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Gate</th>
-                  <th>Runs</th>
-                  <th>Match Ratio</th>
-                  <th>Required</th>
-                </tr>
-              </thead>
-              <tbody id="shadow-table-body"></tbody>
-            </table>
-          </details>
+          <div class="hero-meta">
+            <strong>Latest run</strong>
+            <div id="overview-run-label">{html.escape(latest_health_run or "n/a")}</div>
+            <strong style="margin-top:10px;">How to use this</strong>
+            <div>Start with the top cards. Open a ticker to see the full explanation, recent trend, and linked deep-dive reports.</div>
+          </div>
         </div>
-        <div class="delta-panel">
-          <div class="delta-head">
-            <div class="label">What changed since last run</div>
-            <div id="delta-run-range" class="chip">n/a</div>
+        <div class="summary-grid">
+          <div class="surface">
+            <div class="kicker">Bullish setups</div>
+            <div id="overview-shortlist-count" class="metric-value">0</div>
+            <div class="metric-sub">Tickers with the clearest positive edge today.</div>
           </div>
-          <div id="delta-sub" class="delta-sub"></div>
-          <div class="delta-grid">
-            <div class="delta-item"><div class="k">Profile changes</div><div id="delta-profile-changes" class="v">n/a</div></div>
-            <div class="delta-item"><div class="k">Score deltas</div><div id="delta-score-deltas" class="v">n/a</div></div>
-            <div class="delta-item"><div class="k">Rank deltas</div><div id="delta-rank-deltas" class="v">n/a</div></div>
-            <div class="delta-item"><div class="k">Shadow deltas</div><div id="delta-shadow-deltas" class="v">n/a</div></div>
+          <div class="surface">
+            <div class="kicker">Healthy setups</div>
+            <div id="overview-healthy-count" class="metric-value">0</div>
+            <div class="metric-sub">Tickers without active drift warnings.</div>
           </div>
-          <details id="delta-details" class="delta-table-wrap">
-            <summary>Per-ticker run deltas</summary>
-            <table>
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Profile</th>
-                  <th>Source</th>
-                  <th>Gap Δ</th>
-                  <th>Rank Δ</th>
-                </tr>
-              </thead>
-              <tbody id="delta-table-body"></tbody>
-            </table>
-          </details>
+          <div class="surface">
+            <div class="kicker">Avoid for now</div>
+            <div id="overview-holdoff-count" class="metric-value">0</div>
+            <div class="metric-sub">Tickers where the current edge is weak or warning flags are active.</div>
+          </div>
+          <div class="surface">
+            <div class="kicker">Current leader</div>
+            <div id="overview-leader" class="metric-value">n/a</div>
+            <div id="overview-leader-copy" class="metric-sub">Waiting for ranked ticker data.</div>
+          </div>
         </div>
-        <svg id="system-svg"></svg>
+        <div class="section-head">
+          <div>
+            <h3>Ranked ticker cards</h3>
+            <p>Each card summarizes what the model is seeing, why it matters, and what to watch next.</p>
+          </div>
+        </div>
+        <div class="overview-toolbar">
+          <div>
+            <div class="kicker" style="margin-bottom:8px;">Quick filters</div>
+            <div id="overview-filter-bar" class="overview-filter-bar">
+              <button type="button" class="filter-chip active" data-overview-filter="all">All</button>
+              <button type="button" class="filter-chip" data-overview-filter="Bullish setup">Bullish</button>
+              <button type="button" class="filter-chip" data-overview-filter="Improving trend">Improving</button>
+              <button type="button" class="filter-chip" data-overview-filter="Caution">Caution</button>
+              <button type="button" class="filter-chip" data-overview-filter="Mixed trend">Mixed</button>
+              <button type="button" class="filter-chip" data-overview-filter="Avoid for now">Avoid</button>
+            </div>
+          </div>
+          <label class="search-group" for="overview-search">
+            <div class="kicker" style="margin-bottom:8px;">Find a ticker</div>
+            <input id="overview-search" class="search-input" type="search" placeholder="Search by symbol, status, or outlook" />
+          </label>
+        </div>
+        <p id="overview-results-copy" class="overview-results-copy">Showing all ranked tickers.</p>
+        <div id="overview-grid" class="overview-grid"></div>
+        <div class="surface ranking-table-wrap">
+          <div class="section-head" style="margin-top:0; margin-bottom:12px;">
+            <div>
+              <h3>Why the order looks this way</h3>
+              <p>Each row explains why a ticker sits above or below the others on this run.</p>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Symbol</th>
+                <th>Signal</th>
+                <th>Confidence</th>
+                <th>Vs market</th>
+                <th>Why it sits here</th>
+              </tr>
+            </thead>
+            <tbody id="ranking-table-body"></tbody>
+          </table>
+        </div>
+        <div class="footnote">These signals summarize backtest-style model outputs. They help you review relative strength and risk, but they are not a substitute for your own investment judgment.</div>
       </section>
+
       <section id="ticker-panel" class="panel">
-        <div class="ticker-header">
-          <div class="ticker-name" id="ticker-name"></div>
-          <div class="chip" id="ticker-outlook"></div>
-        </div>
-        <div class="cards">
-          <div class="card"><div class="label">Status</div><div class="value" id="ticker-status"></div></div>
-          <div class="card"><div class="label">Model vs Market</div><div class="value" id="ticker-vs-buy"></div></div>
-          <div class="card"><div class="label">Model vs Base</div><div class="value" id="ticker-vs-base"></div></div>
-          <div class="card"><div class="label">Active Model</div><div class="value" id="ticker-active-model"></div></div>
-        </div>
-        <div class="tabs">
-          <button id="tab-overview" class="tab-btn active" onclick="showTab('overview')">Overview</button>
-          <button id="tab-performance" class="tab-btn" onclick="showTab('performance')">Performance</button>
-          <button id="tab-advanced" class="tab-btn" onclick="showTab('advanced')">Advanced</button>
-        </div>
-        <div id="tab-overview-panel" class="tab-panel active">
-          <div class="card" style="margin-top:10px;">
-            <div class="label">Action</div>
-            <div class="value" id="ticker-action" style="font-size:16px;"></div>
-            <div id="ticker-summary" style="margin-top:6px;font-size:13px;color:#475569;"></div>
+        <div class="ticker-toolbar">
+          <div>
+            <div class="eyebrow">Ticker detail</div>
+            <div id="ticker-name" class="ticker-title"></div>
+            <p id="ticker-subtitle" class="ticker-subtitle"></p>
+          </div>
+          <div class="card-actions">
+            <button class="ghost-button" onclick="showOverview()">Back to overview</button>
+            <button class="ghost-button" onclick="showSystem()">Open system view</button>
           </div>
         </div>
-        <div id="tab-performance-panel" class="tab-panel">
+        <div class="badge-row">
+          <span id="ticker-recommendation-badge" class="badge badge-overview">n/a</span>
+          <span id="ticker-confidence-badge" class="badge badge-low">n/a</span>
+          <span id="ticker-status-badge" class="badge badge-low">n/a</span>
+          <span id="ticker-outlook-badge" class="badge badge-overview">n/a</span>
+        </div>
+        <p id="ticker-recommendation-subtitle" class="signal-subtitle"></p>
+        <div class="detail-metrics">
+          <div class="surface">
+            <div class="kicker">Model vs market</div>
+            <div id="ticker-vs-buy" class="metric-value">n/a</div>
+            <div class="metric-sub">How the active setup compares with buy-and-hold.</div>
+          </div>
+          <div class="surface">
+            <div class="kicker">Model vs base</div>
+            <div id="ticker-vs-base" class="metric-value">n/a</div>
+            <div class="metric-sub">How the active setup compares with your baseline profile.</div>
+          </div>
+          <div class="surface">
+            <div class="kicker">Active model</div>
+            <div id="ticker-active-model" class="metric-value">n/a</div>
+            <div id="ticker-active-source" class="metric-sub">n/a</div>
+          </div>
+          <div class="surface">
+            <div class="kicker">Market rank</div>
+            <div id="ticker-rank" class="metric-value">n/a</div>
+            <div class="metric-sub">How this ticker ranks against the rest of today's list.</div>
+          </div>
+        </div>
+        <div class="detail-grid">
+          <div class="surface">
+            <div class="section-head" style="margin-top:0; margin-bottom:12px;">
+              <div>
+                <h3>Why this looks interesting</h3>
+                <p>Plain-English explanation of the current signal.</p>
+              </div>
+            </div>
+            <p id="ticker-action" class="body-copy"></p>
+            <p id="ticker-summary" class="body-copy" style="margin-top:12px;"></p>
+            <div class="watch-box details-note"><strong>What to watch next:</strong> <span id="ticker-watch"></span></div>
+            <div class="watch-box details-note"><strong>How it compares with peers:</strong> <span id="ticker-peer-comparison"></span></div>
+          </div>
           <div class="chart-wrap">
-            <canvas id="ticker-chart" width="960" height="230"></canvas>
+            <div class="section-head" style="margin-top:0; margin-bottom:12px;">
+              <div>
+                <h3>Recent edge trend</h3>
+                <p>Active model edge over recent daily runs.</p>
+              </div>
+            </div>
+            <canvas id="ticker-chart" width="960" height="260"></canvas>
           </div>
-          <div style="margin-top:8px;">
+        </div>
+        <div class="detail-grid">
+          <div class="surface">
+            <div class="section-head" style="margin-top:0; margin-bottom:12px;">
+              <div>
+                <h3>Profile options</h3>
+                <p>How the available profiles stack up for this ticker.</p>
+              </div>
+            </div>
             <table>
               <thead><tr><th>Profile</th><th>Rank</th><th>Gap vs Buy/Hold</th></tr></thead>
               <tbody id="profile-table"></tbody>
             </table>
           </div>
-        </div>
-        <div id="tab-advanced-panel" class="tab-panel">
-          <details>
-            <summary>Operational internals</summary>
-            <div id="ops-internals" style="margin-top:8px;font-size:13px;color:#475569;"></div>
-          </details>
-          <details>
-            <summary>Reports and deep-dive pages</summary>
+          <div class="surface">
+            <div class="section-head" style="margin-top:0; margin-bottom:12px;">
+              <div>
+                <h3>Reports and deep-dive pages</h3>
+                <p>Open the technical reports when you want the full context behind the summary.</p>
+              </div>
+            </div>
             <div class="report-list" id="report-links"></div>
             <div class="preview">
-              <select id="preview-select" onchange="previewReport()" style="width:100%;padding:6px;">
+              <select id="preview-select" class="select-input" onchange="previewReport()">
                 <option value="">Preview a report...</option>
               </select>
               <iframe id="preview-frame" style="display:none;"></iframe>
             </div>
-          </details>
+          </div>
+        </div>
+        <details class="details-note">
+          <summary>Model internals</summary>
+          <div id="ops-internals" class="body-copy" style="margin-top:10px;"></div>
+        </details>
+      </section>
+
+      <section id="system-panel" class="panel">
+        <div class="hero">
+          <div>
+            <div class="eyebrow">Advanced system view</div>
+            <h2>SYSTEM</h2>
+            <p class="hero-copy">Use this panel when you want the operational detail behind the user-facing view: shadow validation, run-to-run changes, and links to the dense research artifacts.</p>
+          </div>
+          <div class="hero-meta">
+            <strong>Purpose</strong>
+            <div>This is the maintenance and trust layer for the recommendation dashboard.</div>
+          </div>
+        </div>
+        <div class="system-grid">
+          <div class="shadow-panel">
+            <div class="shadow-head">
+              <div class="kicker">Shadow gate</div>
+              <div id="shadow-status" class="shadow-status inactive">Inactive</div>
+            </div>
+            <div id="shadow-meta" class="shadow-meta"></div>
+            <div id="shadow-failing" class="shadow-failing"></div>
+            <div id="shadow-suggestion" class="shadow-suggestion"></div>
+            <details id="shadow-details" class="shadow-table-wrap">
+              <summary>Per-symbol shadow agreement</summary>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Gate</th>
+                    <th>Runs</th>
+                    <th>Match Ratio</th>
+                    <th>Required</th>
+                  </tr>
+                </thead>
+                <tbody id="shadow-table-body"></tbody>
+              </table>
+            </details>
+          </div>
+          <div class="delta-panel">
+            <div class="delta-head">
+              <div class="kicker">What changed since last run</div>
+              <div id="delta-run-range" class="badge badge-overview">n/a</div>
+            </div>
+            <div id="delta-sub" class="delta-sub"></div>
+            <div class="delta-grid">
+              <div class="delta-item"><div class="k">Profile changes</div><div id="delta-profile-changes" class="v">n/a</div></div>
+              <div class="delta-item"><div class="k">Score deltas</div><div id="delta-score-deltas" class="v">n/a</div></div>
+              <div class="delta-item"><div class="k">Rank deltas</div><div id="delta-rank-deltas" class="v">n/a</div></div>
+              <div class="delta-item"><div class="k">Shadow deltas</div><div id="delta-shadow-deltas" class="v">n/a</div></div>
+            </div>
+            <details id="delta-details" class="delta-table-wrap">
+              <summary>Per-ticker run deltas</summary>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Profile</th>
+                    <th>Source</th>
+                    <th>Gap Δ</th>
+                    <th>Rank Δ</th>
+                  </tr>
+                </thead>
+                <tbody id="delta-table-body"></tbody>
+              </table>
+            </details>
+          </div>
+          <div class="surface">
+            <div class="section-head" style="margin-top:0; margin-bottom:12px;">
+              <div>
+                <h3>System reports</h3>
+                <p>Quick links to the dense artifacts that back the dashboard.</p>
+              </div>
+            </div>
+            <div id="system-report-links" class="system-links"></div>
+          </div>
+          <div class="surface">
+            <div class="section-head" style="margin-top:0; margin-bottom:12px;">
+              <div>
+                <h3>Ticker map</h3>
+                <p>Each node reflects a ticker's current health and relative edge.</p>
+              </div>
+            </div>
+            <svg id="system-svg"></svg>
+          </div>
         </div>
       </section>
     </main>
@@ -1305,12 +2216,25 @@ def render_product_dashboard(
   <script>
     const systemNodes = {json.dumps(nodes, sort_keys=True)};
     const tickerData = {json.dumps(ticker_payload, sort_keys=True)};
+    const rankingData = {json.dumps(ranking_payload, sort_keys=True)};
     const globalReports = {json.dumps(dense_links, sort_keys=True)};
     const shadowGate = {json.dumps(shadow_gate_payload, sort_keys=True)};
     const shadowSuggestion = {json.dumps(shadow_suggestion_payload, sort_keys=True)};
     const runDelta = {json.dumps(run_delta_payload, sort_keys=True)};
     const tickerOrder = {json.dumps(tickers_sorted)};
-    let currentTicker = tickerOrder[0];
+    const latestHealthRun = {json.dumps(latest_health_run)};
+    let currentTicker = null;
+    let overviewFilter = 'all';
+    let overviewSearch = '';
+
+    function escapeHtml(value) {{
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }}
 
     function resetNav(activeId) {{
       document.querySelectorAll('.nav-button').forEach((btn) => btn.classList.remove('active'));
@@ -1318,51 +2242,266 @@ def render_product_dashboard(
       if (active) active.classList.add('active');
     }}
 
+    function showPanel(panelId) {{
+      ['overview-panel', 'ticker-panel', 'system-panel'].forEach((id) => {{
+        const panel = document.getElementById(id);
+        panel.classList.toggle('active', id === panelId);
+      }});
+    }}
+
+    function recommendationClass(label) {{
+      const text = String(label || '').toLowerCase();
+      if (text.includes('bullish')) return 'badge-shortlist';
+      if (text.includes('improving') || text.includes('mixed')) return 'badge-constructive';
+      if (text.includes('caution')) return 'badge-watch';
+      if (text.includes('avoid')) return 'badge-hold-off';
+      return 'badge-overview';
+    }}
+
+    function confidenceClass(label) {{
+      const text = String(label || '').toLowerCase();
+      if (text.includes('high')) return 'badge-shortlist';
+      if (text.includes('medium')) return 'badge-medium';
+      return 'badge-low';
+    }}
+
+    function statusClass(label) {{
+      const text = String(label || '').toLowerCase();
+      if (text.includes('healthy')) return 'badge-healthy';
+      if (text.includes('watch')) return 'badge-watch';
+      if (text.includes('critical')) return 'badge-critical';
+      return 'badge-low';
+    }}
+
+    function rankedTickers() {{
+      return rankingData.map((item) => item.symbol).filter((symbol) => !!tickerData[symbol]);
+    }}
+
+    function rankingEntry(symbol) {{
+      return rankingData.find((item) => item.symbol === symbol) || null;
+    }}
+
+    function filteredRankedEntries(rankedEntries) {{
+      const search = overviewSearch.trim().toLowerCase();
+      return rankedEntries.filter((entry) => {{
+        const data = tickerData[entry.symbol];
+        if (!data) return false;
+        const matchesFilter = overviewFilter === 'all' || data.recommendation === overviewFilter;
+        if (!matchesFilter) return false;
+        if (!search) return true;
+        const haystack = [
+          entry.symbol,
+          data.recommendation,
+          data.recommendation_subtitle,
+          data.status,
+          data.outlook,
+          data.summary,
+          data.action,
+          data.what_to_watch,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(search);
+      }});
+    }}
+
+    function syncOverviewControls(filteredCount, totalCount) {{
+      document.querySelectorAll('[data-overview-filter]').forEach((button) => {{
+        const selected = (button.dataset.overviewFilter || 'all') === overviewFilter;
+        button.classList.toggle('active', selected);
+      }});
+      const searchInput = document.getElementById('overview-search');
+      if (searchInput && searchInput.value !== overviewSearch) {{
+        searchInput.value = overviewSearch;
+      }}
+      const resultsCopy = document.getElementById('overview-results-copy');
+      if (!resultsCopy) return;
+      if (filteredCount === totalCount && !overviewSearch.trim() && overviewFilter === 'all') {{
+        resultsCopy.textContent = `Showing all ${{totalCount}} ranked tickers.`;
+        return;
+      }}
+      const filterLabel = overviewFilter === 'all' ? 'all signals' : overviewFilter;
+      const searchLabel = overviewSearch.trim() ? ` matching "${{overviewSearch.trim()}}"` : '';
+      resultsCopy.textContent = `Showing ${{filteredCount}} of ${{totalCount}} tickers for ${{filterLabel}}${{searchLabel}}.`;
+    }}
+
+    function collectTickerLinks(symbol, data) {{
+      const links = [];
+      globalReports.forEach((item) => links.push(item));
+      (data.profiles || []).forEach((item) => {{
+        if (item.visual_report) links.push({{ label: `${{symbol}} ${{item.profile}} report`, url: item.visual_report }});
+        if (item.pairwise_report) links.push({{ label: `${{symbol}} pairwise`, url: item.pairwise_report }});
+      }});
+      const seen = new Set();
+      return links.filter((item) => {{
+        const key = `${{item.label}}::${{item.url}}`;
+        if (!item.url || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }});
+    }}
+
+    function primaryTickerReport(symbol, data) {{
+      const active = (data.profiles || []).find((item) => item.profile === data.active_profile && item.visual_report);
+      if (active && active.visual_report) return {{ label: `${{symbol}} ${{active.profile}} report`, url: active.visual_report }};
+      const fallback = (data.profiles || []).find((item) => item.visual_report);
+      return fallback && fallback.visual_report ? {{ label: `${{symbol}} ${{fallback.profile}} report`, url: fallback.visual_report }} : null;
+    }}
+
+    function showOverview() {{
+      showPanel('overview-panel');
+      resetNav('nav-overview');
+      renderOverview();
+    }}
+
     function showSystem() {{
-      document.getElementById('system-panel').classList.add('active');
-      document.getElementById('ticker-panel').classList.remove('active');
+      showPanel('system-panel');
       resetNav('nav-system');
       renderShadowPanel();
       renderRunDelta();
+      renderSystemReports();
       drawSystem();
     }}
 
     function showTicker(symbol) {{
       if (!tickerData[symbol]) return;
       currentTicker = symbol;
-      document.getElementById('system-panel').classList.remove('active');
-      document.getElementById('ticker-panel').classList.add('active');
+      showPanel('ticker-panel');
       resetNav(`nav-${{symbol}}`);
       renderTicker(symbol);
-      showTab('overview');
     }}
 
-    function showTab(tab) {{
-      ['overview','performance','advanced'].forEach((name) => {{
-        const btn = document.getElementById(`tab-${{name}}`);
-        const panel = document.getElementById(`tab-${{name}}-panel`);
-        const active = name === tab;
-        btn.classList.toggle('active', active);
-        panel.classList.toggle('active', active);
+    function renderOverview() {{
+      const rankedEntries = rankingData.filter((entry) => !!tickerData[entry.symbol]);
+      const ranked = rankedEntries.map((entry) => tickerData[entry.symbol]).filter(Boolean);
+      const shortlistCount = ranked.filter((item) => item.recommendation === 'Bullish setup').length;
+      const healthyCount = ranked.filter((item) => item.status === 'Healthy').length;
+      const holdoffCount = ranked.filter((item) => item.recommendation === 'Avoid for now' || item.status === 'Critical').length;
+      const leaderEntry = rankedEntries[0] || null;
+      const leader = leaderEntry ? tickerData[leaderEntry.symbol] : null;
+      const visibleEntries = filteredRankedEntries(rankedEntries);
+      const leaderSignal = leader
+        ? leader.recommendation + (leader.recommendation_subtitle ? ` (${{leader.recommendation_subtitle}})` : '')
+        : '';
+
+      document.getElementById('overview-run-label').textContent = runDelta.latest_run_timestamp || latestHealthRun || 'n/a';
+      document.getElementById('overview-shortlist-count').textContent = String(shortlistCount);
+      document.getElementById('overview-healthy-count').textContent = String(healthyCount);
+      document.getElementById('overview-holdoff-count').textContent = String(holdoffCount);
+      document.getElementById('overview-leader').textContent = leader ? leader.symbol : 'n/a';
+      document.getElementById('overview-leader-copy').textContent = leader
+        ? `${{leaderSignal}} · ${{leader.active_vs_buy_pct_text || 'n/a'}} vs buy-and-hold · ${{leader.confidence}} confidence · ${{(leaderEntry && leaderEntry.comparison) || ''}}`
+        : 'Waiting for ranked ticker data.';
+      syncOverviewControls(visibleEntries.length, rankedEntries.length);
+
+      const grid = document.getElementById('overview-grid');
+      grid.innerHTML = '';
+      if (visibleEntries.length === 0) {{
+        const empty = document.createElement('div');
+        empty.className = 'surface';
+        empty.innerHTML = '<div class="kicker">No matches</div><div class="metric-sub">Try a different search or clear the current filter.</div>';
+        grid.appendChild(empty);
+      }}
+      visibleEntries.forEach((entry) => {{
+        const data = tickerData[entry.symbol];
+        if (!data) return;
+        const symbol = data.symbol;
+        const report = primaryTickerReport(symbol, data);
+        const card = document.createElement('article');
+        card.className = 'ticker-card';
+        card.innerHTML = `
+          <div class="ticker-card-top">
+            <div>
+              <div class="ticker-card-symbol">${{escapeHtml(symbol)}}</div>
+              <div class="ticker-card-rank">Priority #${{entry.rank}} · ${{escapeHtml(data.outlook || 'n/a')}}</div>
+            </div>
+            <div class="badge-row">
+              <span class="badge ${{recommendationClass(data.recommendation)}}">${{escapeHtml(data.recommendation || 'n/a')}}</span>
+              <span class="badge ${{confidenceClass(data.confidence)}}">${{escapeHtml(data.confidence || 'n/a')}} confidence</span>
+            </div>
+          </div>
+          <p class="ticker-card-signal">${{escapeHtml(data.recommendation_subtitle || '')}}</p>
+          <div class="metric-strip">
+            <div>
+              <div class="item-label">Vs market</div>
+              <div class="item-value">${{escapeHtml(data.active_vs_buy_pct_text || 'n/a')}}</div>
+            </div>
+            <div>
+              <div class="item-label">Vs base</div>
+              <div class="item-value">${{escapeHtml(data.active_vs_base_pct_text || 'n/a')}}</div>
+            </div>
+            <div>
+              <div class="item-label">Status</div>
+              <div class="item-value">${{escapeHtml(data.status || 'n/a')}}</div>
+            </div>
+          </div>
+          <p class="ticker-card-copy">${{escapeHtml(data.action || '')}}</p>
+          <p class="ticker-card-copy">${{escapeHtml(entry.reason || data.summary || '')}}</p>
+          <p class="comparison-copy">${{escapeHtml(entry.comparison || '')}}</p>
+          <div class="watch-box"><strong>What to watch:</strong> ${{escapeHtml(data.what_to_watch || '')}}</div>
+          <div class="card-actions">
+            <button class="primary-button open-details" type="button">Open details</button>
+            ${{report ? `<a class="link-button" href="${{escapeHtml(report.url)}}" target="_blank" rel="noopener noreferrer">Open report</a>` : ''}}
+          </div>
+        `;
+        const openButton = card.querySelector('.open-details');
+        if (openButton) {{
+          openButton.addEventListener('click', () => showTicker(symbol));
+        }}
+        grid.appendChild(card);
       }});
-      if (tab === 'performance') drawTickerChart();
+
+      const rankingBody = document.getElementById('ranking-table-body');
+      rankingBody.innerHTML = '';
+      if (visibleEntries.length === 0) {{
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td colspan="6">No tickers match the current filter.</td>';
+        rankingBody.appendChild(tr);
+      }}
+      visibleEntries.forEach((entry) => {{
+        const data = tickerData[entry.symbol];
+        if (!data) return;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>#${{entry.rank}}</td>
+          <td>${{escapeHtml(entry.symbol)}}</td>
+          <td>${{escapeHtml(data.recommendation || 'n/a')}}</td>
+          <td>${{escapeHtml(data.confidence || 'n/a')}}</td>
+          <td>${{escapeHtml(data.active_vs_buy_pct_text || 'n/a')}}</td>
+          <td>${{escapeHtml(entry.comparison || entry.reason || '')}}</td>
+        `;
+        rankingBody.appendChild(tr);
+      }});
     }}
 
     function drawSystem() {{
       const svg = document.getElementById('system-svg');
       while (svg.firstChild) svg.removeChild(svg.firstChild);
-      const width = svg.clientWidth || 1000;
-      const height = svg.clientHeight || 600;
+      const width = svg.clientWidth || 900;
+      const height = svg.clientHeight || 420;
       const centerX = width / 2;
       const centerY = height / 2;
       const radius = Math.min(width, height) * 0.3;
       const ns = 'http://www.w3.org/2000/svg';
+
       const hub = document.createElementNS(ns, 'circle');
       hub.setAttribute('cx', centerX.toString());
       hub.setAttribute('cy', centerY.toString());
-      hub.setAttribute('r', '28');
+      hub.setAttribute('r', '34');
       hub.setAttribute('fill', '#1d4ed8');
       svg.appendChild(hub);
+
+      const hubLabel = document.createElementNS(ns, 'text');
+      hubLabel.setAttribute('x', centerX.toString());
+      hubLabel.setAttribute('y', (centerY + 5).toString());
+      hubLabel.setAttribute('fill', '#eff6ff');
+      hubLabel.setAttribute('font-size', '11');
+      hubLabel.setAttribute('font-weight', '700');
+      hubLabel.setAttribute('text-anchor', 'middle');
+      hubLabel.textContent = 'Pulse';
+      svg.appendChild(hubLabel);
+
       const count = Math.max(systemNodes.length, 1);
       systemNodes.forEach((node, idx) => {{
         const angle = (Math.PI * 2 * idx) / count;
@@ -1377,16 +2516,37 @@ def render_product_dashboard(
         line.setAttribute('stroke-width', '2');
         line.setAttribute('opacity', '0.7');
         svg.appendChild(line);
-        const circle = document.createElementNS(ns, 'circle');
+
+        const group = document.createElementNS(ns, 'g');
+        group.style.cursor = 'pointer';
+        group.addEventListener('click', () => showTicker(node.symbol));
         const magnitude = Math.abs(node.active_vs_buy_pct || 0);
-        const r = Math.max(16, Math.min(40, 16 + magnitude * 0.5));
-        const statusColor = node.status === 'Critical' ? '#ef4444' : (node.status === 'Watch' ? '#f59e0b' : '#22c55e');
+        const r = Math.max(20, Math.min(42, 18 + magnitude * 0.6));
+        const statusColor = node.status === 'Critical'
+          ? '#ef4444'
+          : node.status === 'Watch'
+          ? '#f59e0b'
+          : '#22c55e';
+
+        const circle = document.createElementNS(ns, 'circle');
         circle.setAttribute('cx', x.toString());
         circle.setAttribute('cy', y.toString());
         circle.setAttribute('r', r.toString());
         circle.setAttribute('fill', statusColor);
-        circle.setAttribute('opacity', '0.92');
-        svg.appendChild(circle);
+        circle.setAttribute('opacity', '0.95');
+        group.appendChild(circle);
+
+        const label = document.createElementNS(ns, 'text');
+        label.setAttribute('x', x.toString());
+        label.setAttribute('y', (y + 4).toString());
+        label.setAttribute('fill', '#ffffff');
+        label.setAttribute('font-size', '11');
+        label.setAttribute('font-weight', '700');
+        label.setAttribute('text-anchor', 'middle');
+        label.textContent = node.symbol || '';
+        group.appendChild(label);
+
+        svg.appendChild(group);
       }});
     }}
 
@@ -1403,7 +2563,9 @@ def render_product_dashboard(
       if (!shadowGate.enabled) {{
         statusEl.textContent = 'Inactive';
         statusEl.classList.add('inactive');
-        const fallback = shadowGate.gate_json_url ? 'Shadow gate artifact available but not readable in this view.' : 'Shadow evaluation is not enabled for this run.';
+        const fallback = shadowGate.gate_json_url
+          ? 'Shadow gate artifact available but not readable in this view.'
+          : 'Shadow evaluation is not enabled for this run.';
         metaEl.textContent = fallback;
         failingEl.textContent = '';
         const stateRatio = shadowSuggestion.state_active_min_match_ratio == null
@@ -1436,11 +2598,10 @@ def render_product_dashboard(
       metaEl.innerHTML = `Window: ${{windowRuns}} runs · Required agreement: ${{minRatio}}${{linkSuffix}}`;
 
       const failing = Array.isArray(shadowGate.failing_symbols) ? shadowGate.failing_symbols : [];
-      if (failing.length === 0) {{
-        failingEl.textContent = 'No failing symbols in current shadow window.';
-      }} else {{
-        failingEl.textContent = `Failing symbols: ${{failing.join(', ')}}`;
-      }}
+      failingEl.textContent = failing.length === 0
+        ? 'No failing symbols in current shadow window.'
+        : `Failing symbols: ${{failing.join(', ')}}`;
+
       if (!shadowSuggestion.enabled) {{
         suggestionEl.textContent = '';
       }} else if (shadowSuggestion.accepted) {{
@@ -1489,7 +2650,7 @@ def render_product_dashboard(
         const ratio = row.match_ratio == null ? 'n/a' : `${{(row.match_ratio * 100).toFixed(1)}}%`;
         const required = row.min_match_ratio == null ? 'n/a' : `${{(row.min_match_ratio * 100).toFixed(1)}}%`;
         const runs = `${{row.runs_in_window ?? 'n/a'}}/${{row.window_runs_required ?? 'n/a'}}`;
-        tr.innerHTML = `<td>${{row.symbol || ''}}</td><td>${{gate}}</td><td>${{runs}}</td><td>${{ratio}}</td><td>${{required}}</td>`;
+        tr.innerHTML = `<td>${{escapeHtml(row.symbol || '')}}</td><td>${{gate}}</td><td>${{runs}}</td><td>${{ratio}}</td><td>${{required}}</td>`;
         tableBody.appendChild(tr);
       }});
     }}
@@ -1521,16 +2682,9 @@ def render_product_dashboard(
       rangeEl.textContent = `${{previous}} → ${{latest}}`;
       subEl.textContent = `Compared symbols: ${{runDelta.symbols_compared ?? 0}}`;
 
-      const profileParts = [
-        `${{runDelta.profile_change_count ?? 0}} profile changes`,
-        `${{runDelta.source_change_count ?? 0}} source changes`
-      ];
-      profileEl.textContent = profileParts.join(' · ');
+      profileEl.textContent = `${{runDelta.profile_change_count ?? 0}} profile changes · ${{runDelta.source_change_count ?? 0}} source changes`;
 
-      const scoreParts = [
-        `up ${{runDelta.gap_up_count ?? 0}}`,
-        `down ${{runDelta.gap_down_count ?? 0}}`
-      ];
+      const scoreParts = [`up ${{runDelta.gap_up_count ?? 0}}`, `down ${{runDelta.gap_down_count ?? 0}}`];
       if (runDelta.largest_gap_up_symbol && runDelta.largest_gap_up_delta != null) {{
         scoreParts.push(`best ${{runDelta.largest_gap_up_symbol}} ${{(Number(runDelta.largest_gap_up_delta) * 100).toFixed(2)}}%`);
       }}
@@ -1566,28 +2720,67 @@ def render_product_dashboard(
           : (row.source_latest || row.source_previous || 'n/a');
         const gapText = row.gap_delta == null ? 'n/a' : `${{(Number(row.gap_delta) * 100).toFixed(2)}}%`;
         const rankText = row.rank_delta == null ? 'n/a' : Number(row.rank_delta).toFixed(2);
-        tr.innerHTML = `<td>${{row.symbol || ''}}</td><td>${{profileText}}</td><td>${{sourceText}}</td><td>${{gapText}}</td><td>${{rankText}}</td>`;
+        tr.innerHTML = `<td>${{escapeHtml(row.symbol || '')}}</td><td>${{escapeHtml(profileText)}}</td><td>${{escapeHtml(sourceText)}}</td><td>${{gapText}}</td><td>${{rankText}}</td>`;
         tableBody.appendChild(tr);
+      }});
+    }}
+
+    function renderSystemReports() {{
+      const wrap = document.getElementById('system-report-links');
+      wrap.innerHTML = '';
+      if (!globalReports.length) {{
+        wrap.textContent = 'No extra system reports were provided for this run.';
+        return;
+      }}
+      globalReports.forEach((item) => {{
+        const link = document.createElement('a');
+        link.href = item.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = item.label;
+        wrap.appendChild(link);
       }});
     }}
 
     function renderTicker(symbol) {{
       const data = tickerData[symbol];
       if (!data) return;
+      const entry = rankingEntry(symbol);
+
       document.getElementById('ticker-name').textContent = symbol;
-      document.getElementById('ticker-status').textContent = data.status || 'n/a';
+      document.getElementById('ticker-subtitle').textContent = (entry && entry.reason) || data.summary || '';
       document.getElementById('ticker-vs-buy').textContent = data.active_vs_buy_pct_text || 'n/a';
       document.getElementById('ticker-vs-base').textContent = data.active_vs_base_pct_text || 'n/a';
       document.getElementById('ticker-active-model').textContent = data.active_profile || 'n/a';
-      document.getElementById('ticker-outlook').textContent = data.outlook || 'n/a';
+      document.getElementById('ticker-active-source').textContent = `Source: ${{data.active_profile_source || 'n/a'}}`;
+      document.getElementById('ticker-rank').textContent = entry ? `#${{entry.rank}} of ${{rankingData.length}}` : 'n/a';
       document.getElementById('ticker-action').textContent = data.action || 'n/a';
       document.getElementById('ticker-summary').textContent = data.summary || '';
+      document.getElementById('ticker-watch').textContent = data.what_to_watch || 'n/a';
+      document.getElementById('ticker-peer-comparison').textContent = (entry && entry.comparison) || 'n/a';
+      document.getElementById('ticker-recommendation-subtitle').textContent = data.recommendation_subtitle || '';
+
+      const recommendationBadge = document.getElementById('ticker-recommendation-badge');
+      recommendationBadge.className = `badge ${{recommendationClass(data.recommendation)}}`;
+      recommendationBadge.textContent = data.recommendation || 'n/a';
+
+      const confidenceBadge = document.getElementById('ticker-confidence-badge');
+      confidenceBadge.className = `badge ${{confidenceClass(data.confidence)}}`;
+      confidenceBadge.textContent = `${{data.confidence || 'n/a'}} confidence`;
+
+      const statusBadge = document.getElementById('ticker-status-badge');
+      statusBadge.className = `badge ${{statusClass(data.status)}}`;
+      statusBadge.textContent = data.status || 'n/a';
+
+      const outlookBadge = document.getElementById('ticker-outlook-badge');
+      outlookBadge.className = 'badge badge-overview';
+      outlookBadge.textContent = data.outlook || 'n/a';
 
       const ops = [
         `Selected profile: ${{data.selected_profile || 'n/a'}}`,
         `Active source: ${{data.active_profile_source || 'n/a'}}`,
         `Regime: ${{data.regime || 'n/a'}}`,
-        `Ensemble confidence: ${{data.ensemble_confidence == null ? 'n/a' : data.ensemble_confidence.toFixed(3)}}`
+        `Ensemble confidence: ${{data.ensemble_confidence == null ? 'n/a' : Number(data.ensemble_confidence).toFixed(3)}}`
       ];
       if (shadowGate.enabled) {{
         const row = (shadowGate.symbols || []).find((item) => item.symbol === symbol);
@@ -1603,24 +2796,18 @@ def render_product_dashboard(
           : `${{(Number(shadowSuggestion.recommended_min_match_ratio) * 100).toFixed(1)}}%`;
         ops.push(`Suggested shadow settings: window_runs=${{shadowSuggestion.recommended_window_runs ?? 'n/a'}}, min_match_ratio=${{ratio}}`);
       }}
-      document.getElementById('ops-internals').innerHTML = ops.map((line) => `<div>${{line}}</div>`).join('');
+      document.getElementById('ops-internals').innerHTML = ops.map((line) => `<div>${{escapeHtml(line)}}</div>`).join('');
 
       const tbody = document.getElementById('profile-table');
       tbody.innerHTML = '';
       (data.profiles || []).forEach((item) => {{
         const tr = document.createElement('tr');
         const pct = item.gap_pct == null ? 'n/a' : `${{item.gap_pct.toFixed(2)}}%`;
-        tr.innerHTML = `<td>${{item.profile || ''}}</td><td>${{item.rank ?? 'n/a'}}</td><td>${{pct}}</td>`;
+        tr.innerHTML = `<td>${{escapeHtml(item.profile || '')}}</td><td>${{item.rank ?? 'n/a'}}</td><td>${{pct}}</td>`;
         tbody.appendChild(tr);
       }});
 
-      const links = [];
-      globalReports.forEach((item) => links.push(item));
-      (data.profiles || []).forEach((item) => {{
-        if (item.visual_report) links.push({{label: `${{symbol}} ${{item.profile}} report`, url: item.visual_report}});
-        if (item.pairwise_report) links.push({{label: `${{symbol}} pairwise`, url: item.pairwise_report}});
-      }});
-
+      const links = collectTickerLinks(symbol, data);
       const linkWrap = document.getElementById('report-links');
       linkWrap.innerHTML = '';
       const preview = document.getElementById('preview-select');
@@ -1632,10 +2819,10 @@ def render_product_dashboard(
         a.rel = 'noopener noreferrer';
         a.textContent = item.label;
         linkWrap.appendChild(a);
-        const opt = document.createElement('option');
-        opt.value = item.url;
-        opt.textContent = item.label;
-        preview.appendChild(opt);
+        const option = document.createElement('option');
+        option.value = item.url;
+        option.textContent = item.label;
+        preview.appendChild(option);
       }});
       drawTickerChart();
     }}
@@ -1645,33 +2832,63 @@ def render_product_dashboard(
       const canvas = document.getElementById('ticker-chart');
       const ctx = canvas.getContext('2d');
       if (!ctx || !data) return;
+
       const history = data.history || [];
+      const activeValues = history.map((item) => item.active_gap).filter((value) => value != null);
+      const selectedValues = history.map((item) => item.selected_gap).filter((value) => value != null);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      const values = history.map((item) => item.active_gap).filter((value) => value != null);
-      if (values.length < 2) return;
+
+      const values = activeValues.concat(selectedValues);
+      if (values.length < 2) {{
+        ctx.fillStyle = '#64748b';
+        ctx.font = '14px Arial';
+        ctx.fillText('Need at least two daily points to draw a trend.', 24, 32);
+        return;
+      }}
+
       const minV = Math.min(...values, 0);
       const maxV = Math.max(...values, 0);
       const range = Math.max(maxV - minV, 1e-6);
-      const pad = 28;
-      const toX = (i) => pad + (i * (canvas.width - pad * 2)) / (values.length - 1);
+      const pad = 34;
+      const toX = (i) => pad + (i * (canvas.width - pad * 2)) / Math.max(history.length - 1, 1);
       const toY = (v) => canvas.height - pad - ((v - minV) * (canvas.height - pad * 2)) / range;
-      ctx.strokeStyle = '#e2e8f0';
+
+      ctx.strokeStyle = '#cbd5e1';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(pad, toY(0));
       ctx.lineTo(canvas.width - pad, toY(0));
       ctx.stroke();
-      ctx.strokeStyle = '#1d4ed8';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      values.forEach((v, i) => {{
-        const x = toX(i);
-        const y = toY(v);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      }});
-      ctx.stroke();
+
+      function drawSeries(color, valuesGetter) {{
+        let started = false;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        history.forEach((item, index) => {{
+          const value = valuesGetter(item);
+          if (value == null) return;
+          const x = toX(index);
+          const y = toY(value);
+          if (!started) {{
+            ctx.moveTo(x, y);
+            started = true;
+          }} else {{
+            ctx.lineTo(x, y);
+          }}
+        }});
+        if (started) ctx.stroke();
+      }}
+
+      drawSeries('#1d4ed8', (item) => item.active_gap);
+      drawSeries('#94a3b8', (item) => item.selected_gap);
+
+      ctx.fillStyle = '#475569';
+      ctx.font = '12px Arial';
+      ctx.fillText('Blue = active model edge', pad, 18);
+      ctx.fillText('Gray = selected profile edge', pad + 180, 18);
     }}
 
     function previewReport() {{
@@ -1687,8 +2904,28 @@ def render_product_dashboard(
       frame.src = src;
     }}
 
-    window.addEventListener('resize', drawSystem);
-    showSystem();
+    window.addEventListener('resize', () => {{
+      if (document.getElementById('system-panel').classList.contains('active')) drawSystem();
+      if (document.getElementById('ticker-panel').classList.contains('active')) drawTickerChart();
+    }});
+
+    const initialTicker = rankedTickers()[0] || tickerOrder[0] || null;
+    currentTicker = initialTicker;
+    document.querySelectorAll('[data-overview-filter]').forEach((button) => {{
+      button.addEventListener('click', () => {{
+        overviewFilter = button.dataset.overviewFilter || 'all';
+        renderOverview();
+      }});
+    }});
+    const overviewSearchInput = document.getElementById('overview-search');
+    if (overviewSearchInput) {{
+      overviewSearchInput.addEventListener('input', (event) => {{
+        overviewSearch = event.target && typeof event.target.value === 'string' ? event.target.value : '';
+        renderOverview();
+      }});
+    }}
+
+    showOverview();
   </script>
 </body>
 </html>

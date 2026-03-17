@@ -75,6 +75,8 @@ def test_render_experiment_report_writes_html(tmp_path):
     assert "Metric cheat sheet" in text
     assert "Walk-forward equity gaps" in text
     assert "Sweep ranking" in text
+    assert "Decision snapshot" in text
+    assert "What the fold history says" in text
     assert "models/m4.zip" in text
     assert "Run lineage" in text
     assert "experiment_run_id" in text
@@ -97,6 +99,8 @@ def test_render_ticker_tabs_report_writes_tabs_page(tmp_path):
     )
     assert result.exists()
     text = result.read_text(encoding="utf-8")
+    assert "Research workspace" in text
+    assert "Start here" in text
     assert "showTicker" in text
     assert "AAPL" in text
     assert "MSFT" in text
@@ -121,6 +125,7 @@ def test_render_ticker_tabs_report_includes_leaderboards(tmp_path):
     assert "Tickers" in text
     assert "Stability leaderboard" in text
     assert "showReport" in text
+    assert "Open in new tab" in text
     assert "stability.html" in text
 
 
@@ -139,6 +144,9 @@ def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
             {
                 "symbol": "AAPL",
                 "status": "Healthy",
+                "recommendation": "Bullish setup",
+                "recommendation_subtitle": "positive and stable",
+                "confidence": "High",
                 "selected_profile": "candidate",
                 "active_profile": "candidate",
                 "active_profile_source": "selection_state",
@@ -147,12 +155,16 @@ def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
                 "active_rank": 1,
                 "active_vs_buy_and_hold": "+3.20%",
                 "active_vs_base": "+1.10%",
-                "recommended_action": "Keep current active profile.",
-                "summary": "candidate vs buy-and-hold +3.20%; vs base +1.10%.",
+                "recommended_action": "This looks like a bullish setup while the edge stays positive.",
+                "summary": "AAPL is 3.20% ahead of buy-and-hold and 1.10% ahead of the base setup.",
+                "what_to_watch": "Watch whether the edge remains positive on the next daily update.",
             },
             {
                 "symbol": "MSFT",
                 "status": "Watch",
+                "recommendation": "Caution",
+                "recommendation_subtitle": "promise is there, but warning flags are active",
+                "confidence": "Low",
                 "selected_profile": "base",
                 "active_profile": "candidate",
                 "active_profile_source": "ensemble_v3",
@@ -161,8 +173,9 @@ def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
                 "active_rank": 2,
                 "active_vs_buy_and_hold": "-1.20%",
                 "active_vs_base": "-0.30%",
-                "recommended_action": "Monitor next run and re-check thresholds.",
-                "summary": "candidate vs buy-and-hold -1.20%; vs base -0.30%.",
+                "recommended_action": "Keep this ticker on watch until the next run looks cleaner.",
+                "summary": "MSFT is behind buy-and-hold and is also trailing the base setup.",
+                "what_to_watch": "Watch for the warning flags to clear before promoting this name.",
             },
         ]
     ).to_csv(ticker_summary, index=False)
@@ -244,11 +257,25 @@ def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
     )
     assert result.exists()
     text = result.read_text(encoding="utf-8")
+    assert "Today's ticker shortlist" in text
+    assert "showOverview" in text
     assert "SYSTEM" in text
     assert "showSystem" in text
     assert "renderRunDelta" in text
     assert "What changed since last run" in text
     assert "showTicker" in text
+    assert "Why the order looks this way" in text
+    assert "Why this looks interesting" in text
+    assert "What to watch next" in text
+    assert "How it compares with peers" in text
+    assert "Quick filters" in text
+    assert "Find a ticker" in text
+    assert "overview-filter-bar" in text
+    assert "overview-search" in text
+    assert "Showing all" in text
+    assert "positive and stable" in text
+    assert "warning flags are active" in text
+    assert "Ahead of MSFT" in text
     assert "System matrix workspace" in text
     assert "aapl_candidate.html" in text
 
