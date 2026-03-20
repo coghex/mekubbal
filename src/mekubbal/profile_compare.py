@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from itertools import combinations, product
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+from mekubbal.reporting.html import render_html_table
+from mekubbal.statistics import bootstrap_mean_confidence, paired_permutation_stats
 
 
 def parse_profile_reports(values: list[str]) -> dict[str, str]:
@@ -59,92 +62,6 @@ def _paired_difference(reference: pd.Series, other: pd.Series) -> np.ndarray:
     return np.asarray([], dtype=float)
 
 
-def _bootstrap_mean_confidence(
-    values: np.ndarray,
-    *,
-    confidence_level: float,
-    n_bootstrap: int,
-    seed: int,
-) -> dict[str, float]:
-    array = np.asarray(values, dtype=float)
-    array = array[np.isfinite(array)]
-    if array.size == 0:
-        raise ValueError("Cannot compute confidence from empty paired differences.")
-    mean_value = float(array.mean())
-    if array.size == 1:
-        return {
-            "mean": mean_value,
-            "ci_low": mean_value,
-            "ci_high": mean_value,
-            "ci_width": 0.0,
-        }
-    rng = np.random.default_rng(seed)
-    sample_size = int(array.size)
-    indices = rng.integers(0, sample_size, size=(int(n_bootstrap), sample_size))
-    boot_means = array[indices].mean(axis=1)
-    alpha = (1.0 - float(confidence_level)) / 2.0
-    ci_low = float(np.quantile(boot_means, alpha))
-    ci_high = float(np.quantile(boot_means, 1.0 - alpha))
-    return {
-        "mean": mean_value,
-        "ci_low": ci_low,
-        "ci_high": ci_high,
-        "ci_width": ci_high - ci_low,
-    }
-
-
-def _paired_permutation_stats(
-    differences: np.ndarray,
-    *,
-    n_permutation: int,
-    seed: int,
-) -> dict[str, float]:
-    diffs = np.asarray(differences, dtype=float)
-    diffs = diffs[np.isfinite(diffs)]
-    if diffs.size == 0:
-        raise ValueError("Cannot compute paired significance on empty differences.")
-    observed = float(diffs.mean())
-    pair_count = int(diffs.size)
-
-    if pair_count <= 16:
-        signs = np.asarray(list(product([-1.0, 1.0], repeat=pair_count)), dtype=float)
-    else:
-        rng = np.random.default_rng(seed)
-        signs = rng.choice(np.asarray([-1.0, 1.0], dtype=float), size=(int(n_permutation), pair_count))
-    permutation_means = (signs * diffs).mean(axis=1)
-
-    return {
-        "mean_diff": observed,
-        "pair_count": float(pair_count),
-        "p_two_sided": float((np.abs(permutation_means) >= abs(observed)).mean()),
-        "p_profile_a_better": float((permutation_means >= observed).mean()),
-        "p_profile_b_better": float((permutation_means <= observed).mean()),
-    }
-
-
-def _html_table(title: str, note: str, frame: pd.DataFrame) -> str:
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>{title}</title>
-  <style>
-    body {{ font-family: Arial, sans-serif; margin: 24px; color: #222; }}
-    table {{ border-collapse: collapse; width: 100%; }}
-    th, td {{ border: 1px solid #ddd; padding: 6px 8px; text-align: left; font-size: 13px; }}
-    th {{ background: #f5f5f5; }}
-    .note {{ border: 1px solid #ddd; border-radius: 8px; padding: 10px; margin-bottom: 12px; background: #fafafa; }}
-  </style>
-</head>
-<body>
-  <h1>{title}</h1>
-  <div class="note">{note}</div>
-  {frame.to_html(index=False)}
-</body>
-</html>
-"""
-
-
 def compare_profile_reports(
     profile_reports: dict[str, str | Path],
     *,
@@ -173,20 +90,21 @@ def compare_profile_reports(
         diffs = _paired_difference(series_by_profile[profile_a], series_by_profile[profile_b])
         if len(diffs) < 1:
             continue
-        conf = _bootstrap_mean_confidence(
+        conf = bootstrap_mean_confidence(
             diffs,
             confidence_level=confidence_level,
             n_bootstrap=n_bootstrap,
             seed=seed + 101 * idx,
+            empty_message="Cannot compute confidence from empty paired differences.",
         )
-        perm = _paired_permutation_stats(
+        perm = paired_permutation_stats(
             diffs,
             n_permutation=n_permutation,
             seed=seed + 307 * idx,
         )
         mean_diff = float(perm["mean_diff"])
-        p_a = float(perm["p_profile_a_better"])
-        p_b = float(perm["p_profile_b_better"])
+        p_a = float(perm["p_observed_or_higher"])
+        p_b = float(perm["p_observed_or_lower"])
         rows.append(
             {
                 "profile_a": profile_a,
@@ -220,7 +138,7 @@ def compare_profile_reports(
         f"(bootstrap={int(n_bootstrap)}, permutations={int(n_permutation)}, "
         f"confidence={int(round(confidence_level * 100))}%)."
     )
-    output_html.write_text(_html_table(title, note, comparisons), encoding="utf-8")
+    output_html.write_text(render_html_table(title, note, comparisons), encoding="utf-8")
     return {
         "profile_count": int(len(sorted_profiles)),
         "comparison_count": int(len(comparisons)),

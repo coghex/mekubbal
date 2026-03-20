@@ -63,7 +63,7 @@ def test_run_profile_monitor_builds_history_and_alerts(tmp_path):
     initial_aapl = initial_summary.loc[initial_summary["symbol"] == "AAPL"].iloc[0]
     assert initial_aapl["status"] == "Healthy"
     assert initial_aapl["recommendation"] == "Improving trend"
-    assert initial_aapl["recommendation_subtitle"] == "positive, but still proving itself"
+    assert initial_aapl["recommendation_subtitle"] == "improving, but not proven yet"
     assert initial_aapl["confidence"] == "Medium"
     assert "ahead of buy-and-hold" in initial_aapl["summary"]
     assert "only 1 recorded run" in initial_aapl["summary"]
@@ -123,11 +123,11 @@ def test_run_profile_monitor_builds_history_and_alerts(tmp_path):
     aapl_row = ticker_summary.loc[ticker_summary["symbol"] == "AAPL"].iloc[0]
     assert aapl_row["status"] == "Critical"
     assert aapl_row["recommendation"] == "Avoid for now"
-    assert aapl_row["recommendation_subtitle"] == "edge is weak or deteriorating"
+    assert aapl_row["recommendation_subtitle"] == "results are weak right now"
     assert aapl_row["confidence"] == "Low"
     assert "buy-and-hold" in aapl_row["summary"]
-    assert "warning" in aapl_row["summary"].lower()
-    assert "watch for the model" in aapl_row["what_to_watch"].lower()
+    assert "current issues" in aapl_row["summary"].lower()
+    assert "watch for this ticker" in aapl_row["what_to_watch"].lower()
     assert int(aapl_row["runs_observed"]) == 2
 
 
@@ -220,7 +220,7 @@ def test_run_profile_monitor_only_shortlists_after_repeated_positive_history(tmp
     ticker_summary = pd.read_csv(ticker_summary_csv)
     aapl_row = ticker_summary.loc[ticker_summary["symbol"] == "AAPL"].iloc[0]
     assert aapl_row["recommendation"] == "Bullish setup"
-    assert aapl_row["recommendation_subtitle"] == "positive and stable"
+    assert aapl_row["recommendation_subtitle"] == "looking strong and steady"
     assert aapl_row["confidence"] == "High"
     assert int(aapl_row["runs_observed"]) == 3
     assert int(aapl_row["positive_streak"]) == 3

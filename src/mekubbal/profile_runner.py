@@ -8,8 +8,9 @@ import pandas as pd
 import tomllib
 
 from mekubbal.control import load_control_config, run_research_control_config
+from mekubbal.profile.config import deep_merge, resolve_existing_path, resolve_path
 from mekubbal.profile_compare import compare_profile_reports
-from mekubbal.visualization import render_ticker_tabs_report
+from mekubbal.reporting import render_ticker_tabs_report
 
 
 def _default_profile_runner_config() -> dict[str, Any]:
@@ -39,32 +40,6 @@ def _default_profile_runner_config() -> dict[str, Any]:
         },
         "profiles": [],
     }
-
-
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            _deep_merge(base[key], value)
-        else:
-            base[key] = value
-    return base
-
-
-def _resolve_path(base_dir: Path, raw_path: str | Path) -> Path:
-    path = Path(raw_path).expanduser()
-    if path.is_absolute():
-        return path.resolve()
-    return (base_dir / path).resolve()
-
-
-def _resolve_existing_path(base_dir: Path, raw_path: str | Path) -> Path:
-    path = Path(raw_path).expanduser()
-    if path.is_absolute():
-        return path.resolve()
-    from_config_dir = (base_dir / path).resolve()
-    if from_config_dir.exists():
-        return from_config_dir
-    return path.resolve()
 
 
 def _slug(name: str) -> str:
@@ -108,7 +83,7 @@ def _validate_profile_runner_config(config: dict[str, Any], *, config_dir: Path)
         if name in seen:
             raise ValueError(f"Duplicate profile name: {name}")
         seen.add(name)
-        resolved = _resolve_existing_path(config_dir, config_path)
+        resolved = resolve_existing_path(config_dir, config_path)
         if not resolved.exists():
             raise FileNotFoundError(f"Profile config does not exist: {resolved}")
 
@@ -121,7 +96,7 @@ def load_profile_runner_config(config_path: str | Path) -> dict[str, Any]:
         loaded = tomllib.load(handle)
     if not isinstance(loaded, dict):
         raise ValueError("Config file must decode to a TOML table.")
-    merged = _deep_merge(deepcopy(_default_profile_runner_config()), loaded)
+    merged = deep_merge(deepcopy(_default_profile_runner_config()), loaded)
     _validate_profile_runner_config(merged, config_dir=path.parent.resolve())
     return merged
 
@@ -139,7 +114,7 @@ def run_profile_runner_config(
     data_cfg = runtime_config["data"]
     comparison_cfg = runtime_config["comparison"]
 
-    output_root = _resolve_path(config_dir_path, str(runner_cfg["output_root"]))
+    output_root = resolve_path(config_dir_path, str(runner_cfg["output_root"]))
     output_root.mkdir(parents=True, exist_ok=True)
     reports_root = output_root / "reports"
     reports_root.mkdir(parents=True, exist_ok=True)
@@ -151,12 +126,12 @@ def run_profile_runner_config(
     for idx, profile in enumerate(runtime_config["profiles"]):
         profile_name = str(profile["name"]).strip()
         profile_slug = _slug(profile_name)
-        profile_config_path = _resolve_existing_path(config_dir_path, str(profile["config"]))
+        profile_config_path = resolve_existing_path(config_dir_path, str(profile["config"]))
         control_cfg = load_control_config(profile_config_path)
 
         if data_cfg.get("path"):
             control_cfg["data"]["path"] = str(
-                _resolve_existing_path(config_dir_path, str(data_cfg["path"]))
+                resolve_existing_path(config_dir_path, str(data_cfg["path"]))
             )
         control_cfg["data"]["refresh"] = bool(data_cfg.get("refresh"))
         if data_cfg.get("symbol") is not None:
@@ -203,8 +178,8 @@ def run_profile_runner_config(
             }
         )
 
-    pairwise_csv = _resolve_path(output_root, str(runner_cfg["pairwise_csv_path"]))
-    pairwise_html = _resolve_path(output_root, str(runner_cfg["pairwise_html_path"]))
+    pairwise_csv = resolve_path(output_root, str(runner_cfg["pairwise_csv_path"]))
+    pairwise_html = resolve_path(output_root, str(runner_cfg["pairwise_html_path"]))
     pairwise_summary = compare_profile_reports(
         profile_reports=profile_gap_reports,
         output_csv_path=pairwise_csv,
@@ -216,13 +191,13 @@ def run_profile_runner_config(
         title=str(comparison_cfg["title"]),
     )
 
-    summary_path = _resolve_path(output_root, str(runner_cfg["profile_summary_path"]))
+    summary_path = resolve_path(output_root, str(runner_cfg["profile_summary_path"]))
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(profile_rows).to_csv(summary_path, index=False)
 
     dashboard_written: str | None = None
     if bool(runner_cfg["build_dashboard"]):
-        dashboard = _resolve_path(output_root, str(runner_cfg["dashboard_path"]))
+        dashboard = resolve_path(output_root, str(runner_cfg["dashboard_path"]))
         dashboard_written = str(
             render_ticker_tabs_report(
                 output_path=dashboard,

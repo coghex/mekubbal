@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from mekubbal.visualization import render_experiment_report
+from mekubbal.reporting import render_experiment_report
 
 
 def _parse_lineage(entries: list[str]) -> dict[str, Any]:

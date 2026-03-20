@@ -5,8 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import tomllib
-
+from mekubbal.config import deep_merge, load_toml_table
 from mekubbal.data import download_ohlcv, save_ohlcv_csv
 from mekubbal.experiment_log import log_experiment_run
 from mekubbal.paper import run_paper_trading
@@ -57,16 +56,6 @@ def _default_loop_config() -> dict[str, Any]:
             "manifest_prefix": "initial-loop",
         },
     }
-
-
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            _deep_merge(base[key], value)
-        else:
-            base[key] = value
-    return base
-
 
 def _validate_loop_config(config: dict[str, Any]) -> None:
     data = config["data"]
@@ -119,12 +108,8 @@ def load_loop_config(config_path: str | Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Config file does not exist: {path}")
 
-    with path.open("rb") as handle:
-        loaded = tomllib.load(handle)
-    if not isinstance(loaded, dict):
-        raise ValueError("Config file must decode to a TOML table.")
-
-    merged = _deep_merge(deepcopy(_default_loop_config()), loaded)
+    loaded = load_toml_table(path)
+    merged = deep_merge(deepcopy(_default_loop_config()), loaded)
     _validate_loop_config(merged)
     return merged
 

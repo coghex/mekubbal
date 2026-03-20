@@ -11,11 +11,13 @@ import pandas as pd
 
 from mekubbal.control import load_control_config
 from mekubbal.data import load_ohlcv_csv
+from mekubbal.profile.config import (
+    resolve_existing_path as _resolve_existing_path,
+    resolve_path as _resolve_path,
+    templated_path as _templated_path,
+)
 from mekubbal.profile_matrix import (
     _base_runner_settings,
-    _resolve_existing_path,
-    _resolve_path,
-    _templated_path,
     load_profile_matrix_config,
 )
 from mekubbal.profile_runner import load_profile_runner_config

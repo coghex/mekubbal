@@ -587,6 +587,7 @@ effective_selection_state_path = "reports/profile_selection_state_shadow_ensembl
 
 def test_run_profile_schedule_auto_applies_stable_shadow_suggestions(monkeypatch, tmp_path):
     import mekubbal.profile_schedule as schedule_module
+    import mekubbal.profile.schedule_shadow_runtime as shadow_runtime_module
 
     matrix_config = tmp_path / "profile-matrix.toml"
     schedule_config = tmp_path / "profile-schedule.toml"
@@ -925,8 +926,8 @@ effective_selection_state_path = "reports/profile_selection_state_shadow_ensembl
 
     monkeypatch.setattr(schedule_module, "run_profile_matrix", fake_run_profile_matrix)
     monkeypatch.setattr(schedule_module, "run_profile_monitor", fake_run_profile_monitor)
-    monkeypatch.setattr(schedule_module, "_build_shadow_comparison", fake_build_shadow_comparison)
-    monkeypatch.setattr(schedule_module, "_suggest_shadow_thresholds", fake_suggest_shadow_thresholds)
+    monkeypatch.setattr(shadow_runtime_module, "_build_shadow_comparison", fake_build_shadow_comparison)
+    monkeypatch.setattr(shadow_runtime_module, "_suggest_shadow_thresholds", fake_suggest_shadow_thresholds)
 
     first = run_profile_schedule(schedule_config)
     assert comparison_params[0] == (3, 0.95)

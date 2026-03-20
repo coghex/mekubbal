@@ -2,17 +2,28 @@ from __future__ import annotations
 
 from collections import defaultdict
 from copy import deepcopy
-from itertools import combinations, product
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 import tomllib
 
+from mekubbal.profile.config import (
+    deep_merge,
+    normalize_symbol_overrides,
+    parse_symbols,
+    resolve_existing_path,
+    resolve_path,
+    templated_path,
+)
+from mekubbal.profile.stats import (
+    _aggregate_profile_rows,
+    _pairwise_profile_rows,
+)
 from mekubbal.profile_selection import run_profile_promotion
 from mekubbal.profile_runner import load_profile_runner_config, run_profile_runner_config
-from mekubbal.visualization import render_ticker_tabs_report
+from mekubbal.reporting.html import render_html_table
+from mekubbal.reporting import render_ticker_tabs_report
 
 
 def _default_profile_matrix_config() -> dict[str, Any]:
@@ -63,86 +74,11 @@ def _default_profile_matrix_config() -> dict[str, Any]:
     }
 
 
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            _deep_merge(base[key], value)
-        else:
-            base[key] = value
-    return base
-
-
-def _resolve_path(base_dir: Path, raw_path: str | Path) -> Path:
-    path = Path(raw_path).expanduser()
-    if path.is_absolute():
-        return path.resolve()
-    return (base_dir / path).resolve()
-
-
-def _resolve_existing_path(base_dir: Path, raw_path: str | Path) -> Path:
-    path = Path(raw_path).expanduser()
-    if path.is_absolute():
-        return path.resolve()
-    from_config_dir = (base_dir / path).resolve()
-    if from_config_dir.exists():
-        return from_config_dir
-    return path.resolve()
-
-
-def _templated_path(template: str, symbol: str) -> str:
-    return template.format(symbol=symbol, symbol_lower=symbol.lower(), symbol_upper=symbol.upper())
-
-
-def _parse_symbols(values: list[Any]) -> list[str]:
-    if not isinstance(values, list) or not values:
-        raise ValueError("symbols must contain at least one ticker.")
-    symbols: list[str] = []
-    seen: set[str] = set()
-    for raw in values:
-        symbol = str(raw).strip().upper()
-        if not symbol or symbol in seen:
-            continue
-        seen.add(symbol)
-        symbols.append(symbol)
-    if not symbols:
-        raise ValueError("symbols must contain at least one ticker.")
-    return symbols
-
-
-def _normalize_symbol_overrides(raw_overrides: Any) -> dict[str, dict[str, Any]]:
-    if raw_overrides is None:
-        return {}
-    if not isinstance(raw_overrides, dict):
-        raise ValueError("symbol_overrides must be a TOML table when provided.")
-
-    allowed_keys = {
-        "config",
-        "output_root_template",
-        "data_path_template",
-        "refresh",
-        "start",
-        "end",
-        "build_symbol_dashboards",
-    }
-    normalized: dict[str, dict[str, Any]] = {}
-    for raw_symbol, raw_override in raw_overrides.items():
-        symbol = str(raw_symbol).strip().upper()
-        if not symbol:
-            raise ValueError("symbol_overrides keys must be non-empty ticker symbols.")
-        if not isinstance(raw_override, dict):
-            raise ValueError(f"symbol_overrides.{symbol} must be a TOML table.")
-        unknown_keys = sorted(set(raw_override) - allowed_keys)
-        if unknown_keys:
-            raise ValueError(f"symbol_overrides.{symbol} contains unknown keys: {unknown_keys}")
-        normalized[symbol] = dict(raw_override)
-    return normalized
-
-
 def _base_runner_settings(config: dict[str, Any], symbol: str) -> dict[str, Any]:
     settings = deepcopy(config["base_runner"])
     override = config.get("symbol_overrides", {}).get(symbol.upper())
     if override:
-        _deep_merge(settings, deepcopy(override))
+        deep_merge(settings, deepcopy(override))
     return settings
 
 
@@ -151,9 +87,9 @@ def _validate_profile_matrix_config(config: dict[str, Any], *, config_dir: Path)
     base_runner = config["base_runner"]
     comparison = config["comparison"]
     promotion = config["promotion"]
-    symbols = _parse_symbols(config["symbols"])
+    symbols = parse_symbols(config["symbols"], field_name="symbols", require_non_empty=True)
     config["symbols"] = symbols
-    config["symbol_overrides"] = _normalize_symbol_overrides(config.get("symbol_overrides"))
+    config["symbol_overrides"] = normalize_symbol_overrides(config.get("symbol_overrides"))
 
     if not matrix.get("output_root"):
         raise ValueError("matrix.output_root is required.")
@@ -162,7 +98,7 @@ def _validate_profile_matrix_config(config: dict[str, Any], *, config_dir: Path)
     if not base_runner.get("config"):
         raise ValueError("base_runner.config is required.")
 
-    base_runner_config_path = _resolve_existing_path(config_dir, str(base_runner["config"]))
+    base_runner_config_path = resolve_existing_path(config_dir, str(base_runner["config"]))
     if not base_runner_config_path.exists():
         raise FileNotFoundError(f"base_runner config does not exist: {base_runner_config_path}")
 
@@ -181,7 +117,7 @@ def _validate_profile_matrix_config(config: dict[str, Any], *, config_dir: Path)
 
     for symbol, override in config["symbol_overrides"].items():
         effective_runner = _base_runner_settings(config, symbol)
-        override_config_path = _resolve_existing_path(config_dir, str(effective_runner["config"]))
+        override_config_path = resolve_existing_path(config_dir, str(effective_runner["config"]))
         if not override_config_path.exists():
             raise FileNotFoundError(f"symbol_overrides.{symbol}.config does not exist: {override_config_path}")
         if bool(effective_runner.get("refresh")):
@@ -198,152 +134,9 @@ def load_profile_matrix_config(config_path: str | Path) -> dict[str, Any]:
         loaded = tomllib.load(handle)
     if not isinstance(loaded, dict):
         raise ValueError("Config file must decode to a TOML table.")
-    merged = _deep_merge(deepcopy(_default_profile_matrix_config()), loaded)
+    merged = deep_merge(deepcopy(_default_profile_matrix_config()), loaded)
     _validate_profile_matrix_config(merged, config_dir=path.parent.resolve())
     return merged
-
-
-def _bootstrap_mean_confidence(
-    values: np.ndarray,
-    *,
-    confidence_level: float,
-    n_bootstrap: int,
-    seed: int,
-) -> dict[str, float]:
-    array = np.asarray(values, dtype=float)
-    array = array[np.isfinite(array)]
-    if array.size == 0:
-        raise ValueError("Cannot compute confidence from empty paired differences.")
-    mean_value = float(array.mean())
-    if array.size == 1:
-        return {
-            "mean": mean_value,
-            "ci_low": mean_value,
-            "ci_high": mean_value,
-            "ci_width": 0.0,
-        }
-    rng = np.random.default_rng(seed)
-    sample_size = int(array.size)
-    indices = rng.integers(0, sample_size, size=(int(n_bootstrap), sample_size))
-    boot_means = array[indices].mean(axis=1)
-    alpha = (1.0 - float(confidence_level)) / 2.0
-    ci_low = float(np.quantile(boot_means, alpha))
-    ci_high = float(np.quantile(boot_means, 1.0 - alpha))
-    return {
-        "mean": mean_value,
-        "ci_low": ci_low,
-        "ci_high": ci_high,
-        "ci_width": ci_high - ci_low,
-    }
-
-
-def _paired_permutation_stats(
-    differences: np.ndarray,
-    *,
-    n_permutation: int,
-    seed: int,
-) -> dict[str, float]:
-    diffs = np.asarray(differences, dtype=float)
-    diffs = diffs[np.isfinite(diffs)]
-    if diffs.size == 0:
-        raise ValueError("Cannot compute paired significance on empty differences.")
-    observed = float(diffs.mean())
-    pair_count = int(diffs.size)
-
-    if pair_count <= 16:
-        signs = np.asarray(list(product([-1.0, 1.0], repeat=pair_count)), dtype=float)
-    else:
-        rng = np.random.default_rng(seed)
-        signs = rng.choice(np.asarray([-1.0, 1.0], dtype=float), size=(int(n_permutation), pair_count))
-    permutation_means = (signs * diffs).mean(axis=1)
-
-    return {
-        "mean_diff": observed,
-        "pair_count": float(pair_count),
-        "p_two_sided": float((np.abs(permutation_means) >= abs(observed)).mean()),
-        "p_profile_a_better": float((permutation_means >= observed).mean()),
-        "p_profile_b_better": float((permutation_means <= observed).mean()),
-    }
-
-
-def _html_table(title: str, note: str, frame: pd.DataFrame) -> str:
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>{title}</title>
-  <style>
-    body {{ font-family: Arial, sans-serif; margin: 24px; color: #222; }}
-    table {{ border-collapse: collapse; width: 100%; }}
-    th, td {{ border: 1px solid #ddd; padding: 6px 8px; text-align: left; font-size: 13px; }}
-    th {{ background: #f5f5f5; }}
-    .note {{ border: 1px solid #ddd; border-radius: 8px; padding: 10px; margin-bottom: 12px; background: #fafafa; }}
-  </style>
-</head>
-<body>
-  <h1>{title}</h1>
-  <div class="note">{note}</div>
-  {frame.to_html(index=False)}
-</body>
-</html>
-"""
-
-
-def _pairwise_profile_rows(
-    profile_symbol_gaps: dict[str, dict[str, float]],
-    *,
-    confidence_level: float,
-    n_bootstrap: int,
-    n_permutation: int,
-    seed: int,
-) -> pd.DataFrame:
-    alpha = 1.0 - float(confidence_level)
-    rows: list[dict[str, Any]] = []
-    profiles = sorted(profile_symbol_gaps)
-    for idx, (profile_a, profile_b) in enumerate(combinations(profiles, 2)):
-        symbols = sorted(set(profile_symbol_gaps[profile_a]).intersection(profile_symbol_gaps[profile_b]))
-        if not symbols:
-            continue
-        diffs = np.asarray(
-            [profile_symbol_gaps[profile_a][symbol] - profile_symbol_gaps[profile_b][symbol] for symbol in symbols],
-            dtype=float,
-        )
-        perm = _paired_permutation_stats(
-            diffs,
-            n_permutation=n_permutation,
-            seed=seed + 307 * idx,
-        )
-        conf = _bootstrap_mean_confidence(
-            diffs,
-            confidence_level=confidence_level,
-            n_bootstrap=n_bootstrap,
-            seed=seed + 101 * idx,
-        )
-        mean_diff = float(perm["mean_diff"])
-        p_a = float(perm["p_profile_a_better"])
-        p_b = float(perm["p_profile_b_better"])
-        rows.append(
-            {
-                "profile_a": profile_a,
-                "profile_b": profile_b,
-                "paired_symbol_count": int(perm["pair_count"]),
-                "mean_gap_diff_a_minus_b": mean_diff,
-                "diff_ci_low": float(conf["ci_low"]),
-                "diff_ci_high": float(conf["ci_high"]),
-                "diff_ci_width": float(conf["ci_width"]),
-                "p_value_two_sided": float(perm["p_two_sided"]),
-                "p_value_profile_a_better": p_a,
-                "p_value_profile_b_better": p_b,
-                "profile_a_better_significant": bool(mean_diff > 0 and p_a <= alpha),
-                "profile_b_better_significant": bool(mean_diff < 0 and p_b <= alpha),
-            }
-        )
-    if not rows:
-        raise ValueError("No overlapping symbols found across profile results.")
-    return pd.DataFrame(rows).sort_values(
-        ["p_value_two_sided", "p_value_profile_a_better", "mean_gap_diff_a_minus_b"],
-        ascending=[True, True, False],
-    )
 
 
 def _is_insufficient_history_error(exc: ValueError) -> bool:
@@ -356,45 +149,6 @@ def _is_insufficient_history_error(exc: ValueError) -> bool:
     ]
     return any(marker in message for marker in insufficient_markers)
 
-
-def _aggregate_profile_rows(symbol_profile_rows: pd.DataFrame, pairwise_rows: pd.DataFrame) -> pd.DataFrame:
-    grouped = (
-        symbol_profile_rows.groupby("profile", as_index=False)
-        .agg(
-            symbols_covered=("symbol", "nunique"),
-            mean_equity_gap=("avg_equity_gap", "mean"),
-            median_equity_gap=("avg_equity_gap", "median"),
-            std_equity_gap=("avg_equity_gap", "std"),
-            mean_rank=("symbol_rank", "mean"),
-            median_rank=("symbol_rank", "median"),
-            win_count=("symbol_rank", lambda values: int((values == 1).sum())),
-        )
-        .copy()
-    )
-    grouped["std_equity_gap"] = grouped["std_equity_gap"].fillna(0.0)
-    grouped["win_rate"] = grouped["win_count"] / grouped["symbols_covered"].clip(lower=1)
-
-    wins: defaultdict[str, int] = defaultdict(int)
-    losses: defaultdict[str, int] = defaultdict(int)
-    for _, row in pairwise_rows.iterrows():
-        profile_a = str(row["profile_a"])
-        profile_b = str(row["profile_b"])
-        if bool(row["profile_a_better_significant"]):
-            wins[profile_a] += 1
-            losses[profile_b] += 1
-        if bool(row["profile_b_better_significant"]):
-            wins[profile_b] += 1
-            losses[profile_a] += 1
-
-    grouped["significant_wins"] = grouped["profile"].map(lambda name: wins.get(str(name), 0))
-    grouped["significant_losses"] = grouped["profile"].map(lambda name: losses.get(str(name), 0))
-    grouped["net_significant_wins"] = grouped["significant_wins"] - grouped["significant_losses"]
-    ranked = grouped.sort_values(
-        ["win_rate", "median_rank", "mean_equity_gap", "net_significant_wins", "profile"],
-        ascending=[False, True, False, False, True],
-    ).reset_index(drop=True)
-    ranked.insert(0, "rank", range(1, len(ranked) + 1))
-    return ranked
 
 
 def run_profile_matrix_config(
@@ -414,7 +168,7 @@ def run_profile_matrix_config(
     if promotion_override is not None:
         if not isinstance(promotion_override, dict):
             raise ValueError("promotion_override must be a mapping when provided.")
-        _deep_merge(runtime_config["promotion"], promotion_override)
+        deep_merge(runtime_config["promotion"], promotion_override)
         _validate_profile_matrix_config(runtime_config, config_dir=config_dir_path)
 
     matrix_cfg = runtime_config["matrix"]
@@ -422,7 +176,7 @@ def run_profile_matrix_config(
     promotion_cfg = runtime_config["promotion"]
     symbols = list(runtime_config["symbols"])
 
-    output_root = _resolve_path(config_dir_path, str(matrix_cfg["output_root"]))
+    output_root = resolve_path(config_dir_path, str(matrix_cfg["output_root"]))
     output_root.mkdir(parents=True, exist_ok=True)
     reports_root = output_root / "reports"
     reports_root.mkdir(parents=True, exist_ok=True)
@@ -438,7 +192,7 @@ def run_profile_matrix_config(
 
     for symbol in symbols:
         effective_base_runner = _base_runner_settings(runtime_config, symbol)
-        base_runner_config_path = _resolve_existing_path(config_dir_path, str(effective_base_runner["config"]))
+        base_runner_config_path = resolve_existing_path(config_dir_path, str(effective_base_runner["config"]))
         base_runner_config = runner_config_cache.get(base_runner_config_path)
         if base_runner_config is None:
             base_runner_config = load_profile_runner_config(base_runner_config_path)
@@ -446,11 +200,13 @@ def run_profile_matrix_config(
         base_runner_dir = base_runner_config_path.parent
         symbol_runner = deepcopy(base_runner_config)
         symbol_runner["runner"]["output_root"] = str(
-            output_root / _templated_path(str(effective_base_runner["output_root_template"]), symbol)
+            output_root / templated_path(str(effective_base_runner["output_root_template"]), symbol)
         )
         symbol_runner["runner"]["build_dashboard"] = bool(effective_base_runner["build_symbol_dashboards"])
         symbol_runner["runner"]["dashboard_title"] = f"{symbol} Profile Workspace"
-        symbol_runner["data"]["path"] = _templated_path(str(effective_base_runner["data_path_template"]), symbol)
+        symbol_runner["data"]["path"] = templated_path(
+            str(effective_base_runner["data_path_template"]), symbol
+        )
         symbol_runner["data"]["refresh"] = bool(effective_base_runner["refresh"])
         symbol_runner["data"]["symbol"] = symbol
         symbol_runner["data"]["start"] = effective_base_runner.get("start")
@@ -532,11 +288,11 @@ def run_profile_matrix_config(
     )
     aggregate_frame = _aggregate_profile_rows(symbol_summary_frame, pairwise_frame)
 
-    symbol_summary_path = _resolve_path(output_root, str(matrix_cfg["symbol_summary_path"]))
-    aggregate_csv_path = _resolve_path(output_root, str(matrix_cfg["profile_aggregate_csv_path"]))
-    aggregate_html_path = _resolve_path(output_root, str(matrix_cfg["profile_aggregate_html_path"]))
-    pairwise_csv_path = _resolve_path(output_root, str(matrix_cfg["profile_pairwise_csv_path"]))
-    pairwise_html_path = _resolve_path(output_root, str(matrix_cfg["profile_pairwise_html_path"]))
+    symbol_summary_path = resolve_path(output_root, str(matrix_cfg["symbol_summary_path"]))
+    aggregate_csv_path = resolve_path(output_root, str(matrix_cfg["profile_aggregate_csv_path"]))
+    aggregate_html_path = resolve_path(output_root, str(matrix_cfg["profile_aggregate_html_path"]))
+    pairwise_csv_path = resolve_path(output_root, str(matrix_cfg["profile_pairwise_csv_path"]))
+    pairwise_html_path = resolve_path(output_root, str(matrix_cfg["profile_pairwise_html_path"]))
     for path in [
         symbol_summary_path,
         aggregate_csv_path,
@@ -553,7 +309,7 @@ def run_profile_matrix_config(
     confidence_level = float(comparison_cfg["confidence_level"])
     conf_pct = int(round(confidence_level * 100))
     aggregate_html_path.write_text(
-        _html_table(
+        render_html_table(
             str(comparison_cfg["aggregate_title"]),
             (
                 "Aggregates profile outcomes across symbols using average equity gaps, "
@@ -564,7 +320,7 @@ def run_profile_matrix_config(
         encoding="utf-8",
     )
     pairwise_html_path.write_text(
-        _html_table(
+        render_html_table(
             str(comparison_cfg["pairwise_title"]),
             (
                 f"Paired profile significance across symbols (confidence={conf_pct}%, "
@@ -580,7 +336,7 @@ def run_profile_matrix_config(
     if bool(promotion_cfg["enabled"]):
         profile_selection = run_profile_promotion(
             profile_symbol_summary_path=symbol_summary_path,
-            state_path=_resolve_path(output_root, str(promotion_cfg["state_path"])),
+            state_path=resolve_path(output_root, str(promotion_cfg["state_path"])),
             base_profile=str(promotion_cfg["base_profile"]),
             candidate_profile=str(promotion_cfg["candidate_profile"]),
             min_candidate_gap_vs_base=float(promotion_cfg["min_candidate_gap_vs_base"]),
@@ -598,7 +354,7 @@ def run_profile_matrix_config(
         if bool(matrix_cfg["include_symbol_pairwise_leaderboards"]):
             for symbol, path in symbol_pairwise_leaderboards.items():
                 leaderboard_reports[f"{symbol} Pairwise"] = path
-        dashboard_file = _resolve_path(output_root, str(matrix_cfg["dashboard_path"]))
+        dashboard_file = resolve_path(output_root, str(matrix_cfg["dashboard_path"]))
         dashboard_path = str(
             render_ticker_tabs_report(
                 output_path=dashboard_file,

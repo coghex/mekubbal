@@ -1,75 +1,13 @@
 from __future__ import annotations
 
-from itertools import product
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-
-def _bootstrap_mean_confidence(
-    values: pd.Series | list[float],
-    *,
-    confidence_level: float,
-    n_bootstrap: int,
-    seed: int,
-) -> dict[str, float]:
-    array = np.asarray(values, dtype=float)
-    array = array[np.isfinite(array)]
-    if array.size == 0:
-        raise ValueError("Cannot compute confidence metrics from empty values.")
-    mean_value = float(array.mean())
-    if array.size == 1:
-        p_gt_zero = 1.0 if mean_value > 0 else 0.0 if mean_value < 0 else 0.5
-        p_lt_zero = 1.0 if mean_value < 0 else 0.0 if mean_value > 0 else 0.5
-        return {
-            "mean": mean_value,
-            "ci_low": mean_value,
-            "ci_high": mean_value,
-            "ci_width": 0.0,
-            "p_gt_zero": p_gt_zero,
-            "p_lt_zero": p_lt_zero,
-        }
-
-    rng = np.random.default_rng(seed)
-    sample_size = int(array.size)
-    indices = rng.integers(0, sample_size, size=(int(n_bootstrap), sample_size))
-    boot_means = array[indices].mean(axis=1)
-    alpha = (1.0 - float(confidence_level)) / 2.0
-    ci_low = float(np.quantile(boot_means, alpha))
-    ci_high = float(np.quantile(boot_means, 1.0 - alpha))
-    return {
-        "mean": mean_value,
-        "ci_low": ci_low,
-        "ci_high": ci_high,
-        "ci_width": ci_high - ci_low,
-        "p_gt_zero": float((boot_means > 0).mean()),
-        "p_lt_zero": float((boot_means < 0).mean()),
-    }
-
-
-def _html_table(title: str, note: str, frame: pd.DataFrame) -> str:
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>{title}</title>
-  <style>
-    body {{ font-family: Arial, sans-serif; margin: 24px; color: #222; }}
-    table {{ border-collapse: collapse; width: 100%; }}
-    th, td {{ border: 1px solid #ddd; padding: 6px 8px; text-align: left; font-size: 13px; }}
-    th {{ background: #f5f5f5; }}
-    .note {{ border: 1px solid #ddd; border-radius: 8px; padding: 10px; margin-bottom: 12px; background: #fafafa; }}
-  </style>
-</head>
-<body>
-  <h1>{title}</h1>
-  <div class="note">{note}</div>
-  {frame.to_html(index=False)}
-</body>
-</html>
-"""
+from mekubbal.reporting.html import render_html_table
+from mekubbal.statistics import bootstrap_mean_confidence, paired_permutation_stats
 
 
 def _ranked(frame: pd.DataFrame, sort_cols: list[str], ascending: list[bool]) -> pd.DataFrame:
@@ -94,38 +32,6 @@ def _paired_difference(
     other_values = other.astype(float).to_numpy()[:min_len]
     diff = ref_values - other_values
     return diff[np.isfinite(diff)]
-
-
-def _paired_permutation_stats(
-    differences: np.ndarray,
-    *,
-    n_permutation: int,
-    seed: int,
-) -> dict[str, float]:
-    diffs = np.asarray(differences, dtype=float)
-    diffs = diffs[np.isfinite(diffs)]
-    if diffs.size == 0:
-        raise ValueError("Cannot compute paired significance on empty differences.")
-    observed = float(diffs.mean())
-    pair_count = int(diffs.size)
-
-    if pair_count <= 16:
-        signs = np.asarray(list(product([-1.0, 1.0], repeat=pair_count)), dtype=float)
-    else:
-        rng = np.random.default_rng(seed)
-        signs = rng.choice(np.asarray([-1.0, 1.0], dtype=float), size=(int(n_permutation), pair_count))
-    permutation_means = (signs * diffs).mean(axis=1)
-
-    p_two_sided = float((np.abs(permutation_means) >= abs(observed)).mean())
-    p_one_sided_reference_better = float((permutation_means >= observed).mean())
-    p_one_sided_other_better = float((permutation_means <= observed).mean())
-    return {
-        "mean_diff": observed,
-        "p_two_sided": p_two_sided,
-        "p_one_sided_reference_better": p_one_sided_reference_better,
-        "p_one_sided_other_better": p_one_sided_other_better,
-        "pair_count": float(pair_count),
-    }
 
 
 def generate_confidence_leaderboards(
@@ -175,13 +81,14 @@ def generate_confidence_leaderboards(
             )
         else:
             gap_series_by_symbol[symbol] = pd.Series(gap.to_numpy(), dtype=float)
-        gap_conf = _bootstrap_mean_confidence(
+        gap_conf = bootstrap_mean_confidence(
             gap,
             confidence_level=confidence_level,
             n_bootstrap=n_bootstrap,
             seed=seed,
+            include_sign_probabilities=True,
         )
-        turb_dd_conf = _bootstrap_mean_confidence(
+        turb_dd_conf = bootstrap_mean_confidence(
             walkforward["diag_turbulent_max_drawdown"].astype(float),
             confidence_level=confidence_level,
             n_bootstrap=n_bootstrap,
@@ -356,20 +263,21 @@ def generate_confidence_leaderboards(
         diffs = _paired_difference(reference_gap, gap_series_by_symbol[symbol])
         if len(diffs) < 1:
             continue
-        permutation = _paired_permutation_stats(
+        permutation = paired_permutation_stats(
             diffs,
             n_permutation=n_permutation,
             seed=seed + 1009 + (idx * 17),
         )
-        diff_conf = _bootstrap_mean_confidence(
+        diff_conf = bootstrap_mean_confidence(
             diffs,
             confidence_level=confidence_level,
             n_bootstrap=n_bootstrap,
             seed=seed + 2027 + (idx * 19),
+            empty_message="Cannot compute confidence from empty paired differences.",
         )
         mean_diff = float(permutation["mean_diff"])
-        p_ref = float(permutation["p_one_sided_reference_better"])
-        p_other = float(permutation["p_one_sided_other_better"])
+        p_ref = float(permutation["p_observed_or_higher"])
+        p_other = float(permutation["p_observed_or_lower"])
         paired_rows.append(
             {
                 "reference_symbol": reference_symbol,
@@ -416,7 +324,7 @@ def generate_confidence_leaderboards(
         csv_path = out / f"{name}_leaderboard.csv"
         html_path = out / f"{name}_leaderboard.html"
         frame.to_csv(csv_path, index=False)
-        html_text = _html_table(
+        html_text = render_html_table(
             title=f"{name.title()} Leaderboard",
             note=notes[name],
             frame=frame,

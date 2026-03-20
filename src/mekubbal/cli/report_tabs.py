@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from mekubbal.visualization import render_ticker_tabs_report
+from mekubbal.reporting import render_ticker_tabs_report
 
 
 def _parse_mapping(values: list[str], *, uppercase_key: bool, field_name: str) -> dict[str, str]:

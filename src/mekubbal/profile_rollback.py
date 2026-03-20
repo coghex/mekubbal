@@ -7,7 +7,7 @@ from typing import Any
 
 import pandas as pd
 
-from mekubbal.profile_monitor import compute_drift_alert_history
+from mekubbal.profile.alerts import compute_drift_alert_history
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:

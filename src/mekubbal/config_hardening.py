@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from mekubbal.control import _load_toml_table
+from mekubbal.config import load_toml_table
 
 
 def _format_float(value: float) -> str:
@@ -27,7 +27,7 @@ def harden_control_config(
     base_path = Path(base_config_path).resolve()
     if not base_path.exists():
         raise FileNotFoundError(f"Base config does not exist: {base_path}")
-    base_raw = _load_toml_table(base_path)
+    base_raw = load_toml_table(base_path)
     base_meta = base_raw.get("meta", {})
     if base_meta is not None and not isinstance(base_meta, dict):
         raise ValueError("Base config meta table must be a TOML table when present.")

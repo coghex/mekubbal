@@ -8,31 +8,9 @@ from typing import Any
 
 import pandas as pd
 
-from mekubbal.profile_monitor import compute_drift_alert_history
+from mekubbal.profile.alerts import compute_drift_alert_history
 from mekubbal.profile_selection import run_profile_promotion
-
-
-def _html_table(title: str, note: str, frame: pd.DataFrame) -> str:
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>{title}</title>
-  <style>
-    body {{ font-family: Arial, sans-serif; margin: 24px; color: #222; }}
-    table {{ border-collapse: collapse; width: 100%; }}
-    th, td {{ border: 1px solid #ddd; padding: 6px 8px; text-align: left; font-size: 13px; }}
-    th {{ background: #f5f5f5; }}
-    .note {{ border: 1px solid #ddd; border-radius: 8px; padding: 10px; margin-bottom: 12px; background: #fafafa; }}
-  </style>
-</head>
-<body>
-  <h1>{title}</h1>
-  <div class="note">{note}</div>
-  {frame.to_html(index=False)}
-</body>
-</html>
-"""
+from mekubbal.reporting.html import render_html_table
 
 
 def run_profile_threshold_sweep(
@@ -193,7 +171,7 @@ def run_profile_threshold_sweep(
     output_html.parent.mkdir(parents=True, exist_ok=True)
     ranked.to_csv(output_csv, index=False)
     output_html.write_text(
-        _html_table(
+        render_html_table(
             title,
             (
                 "Tradeoff score = promotion_rate - alert_rate. "

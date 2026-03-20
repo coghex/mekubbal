@@ -4,7 +4,7 @@ import json
 
 import pandas as pd
 
-from mekubbal.visualization import (
+from mekubbal.reporting import (
     render_experiment_report,
     render_product_dashboard,
     render_ticker_tabs_report,
@@ -258,32 +258,39 @@ def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
     assert result.exists()
     text = result.read_text(encoding="utf-8")
     assert 'id="nav-overview"' in text
-    assert ">ALL</button>" in text
-    assert ">SYS</button>" in text
+    assert ">Overview</button>" in text
+    assert ">System</button>" in text
     assert "showOverview" in text
     assert "SYSTEM" in text
     assert "showSystem" in text
     assert "renderRunDelta" in text
     assert "What changed since last run" in text
     assert "showTicker" in text
-    assert "Relative Strength" in text
-    assert "Leader Trend" in text
-    assert "Leaders" in text
-    assert "What Changed" in text
-    assert "Ranking" in text
-    assert "Signal Mix" in text
-    assert "Summary" in text
-    assert "Trend" in text
+    assert "Performance vs buy and hold" in text
+    assert "Top performer over time" in text
+    assert "Highlighted tickers" in text
+    assert "Recent changes" in text
+    assert "Current ranking" in text
+    assert "Current mix" in text
+    assert "At a glance" in text
+    assert "Recent performance" in text
     assert "Rank" in text
-    assert "Signal" in text
-    assert "Profiles" in text
-    assert "Reports" in text
+    assert "Recommendation" in text
+    assert "Available setups" in text
+    assert "Related reports" in text
     assert "nav-overview-button" in text
     assert "positive and stable" in text
     assert "warning flags are active" in text
     assert "Ahead of MSFT" in text
     assert "System matrix workspace" in text
     assert "aapl_candidate.html" in text
+    assert "Strong setup" in text
+    assert "Saved choice" in text
+    assert "What to do now" in text
+    assert "Advanced details" in text
+    assert "Shadow check details" in text
+    assert "Run change details" in text
+    assert "No urgent issues" in text
     assert "Mekubbal Market Pulse" not in text
 
 
@@ -429,7 +436,7 @@ def test_render_product_dashboard_includes_shadow_gate_panel(tmp_path):
     )
     assert result.exists()
     text = result.read_text(encoding="utf-8")
-    assert "Per-symbol shadow agreement" in text
+    assert "Per-ticker shadow agreement" in text
     assert "shadow-status" in text
     assert "MSFT:match_ratio(0.800<1.000)" in text
     assert "Suggested config: window_runs=" in text
