@@ -17,6 +17,7 @@ from mekubbal.profile.config import (
     templated_path as _templated_path,
 )
 from mekubbal.profile_matrix import (
+    _active_symbol_categories,
     _base_runner_settings,
     load_profile_matrix_config,
 )
@@ -263,6 +264,10 @@ def run_profile_backfill(
             if not active_symbols:
                 continue
             matrix_override["symbols"] = active_symbols
+            matrix_override["symbol_categories"] = _active_symbol_categories(
+                dict(matrix_config.get("symbol_categories", {})),
+                active_symbols,
+            )
             for symbol, frame in eligible_frames.items():
                 snapshot = frame[pd.to_datetime(frame["date"]).dt.normalize() <= replay_date].copy()
                 snapshot.to_csv(temp_data_dir / f"{symbol.lower()}.csv", index=False)

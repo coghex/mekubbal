@@ -10,6 +10,7 @@ __all__ = [
     "resolve_path",
     "resolve_existing_path",
     "parse_symbols",
+    "parse_symbol_categories",
     "templated_path",
     "normalize_symbol_overrides",
 ]
@@ -51,6 +52,50 @@ def parse_symbols(
     if require_non_empty and not symbols:
         raise ValueError(f"{field_name} must contain at least one ticker.")
     return symbols
+
+
+def parse_symbol_categories(
+    values: Any,
+    *,
+    field_name: str,
+    allowed_symbols: list[str],
+) -> dict[str, list[str]]:
+    if values is None:
+        return {}
+    if not isinstance(values, dict):
+        raise ValueError(f"{field_name} must be a TOML table when provided.")
+
+    allowed = {symbol.upper() for symbol in allowed_symbols}
+    assigned_symbols: dict[str, str] = {}
+    normalized: dict[str, list[str]] = {}
+    for raw_category, raw_symbols in values.items():
+        category = str(raw_category).strip().lower()
+        if not category:
+            raise ValueError(f"{field_name} keys must be non-empty category names.")
+        symbols = parse_symbols(
+            raw_symbols,
+            field_name=f"{field_name}.{category}",
+            require_non_empty=True,
+        )
+        unknown_symbols = [symbol for symbol in symbols if symbol not in allowed]
+        if unknown_symbols:
+            raise ValueError(
+                f"{field_name}.{category} references symbols not listed in symbols: {unknown_symbols}"
+            )
+        overlapping_symbols = [
+            symbol for symbol in symbols if symbol in assigned_symbols
+        ]
+        if overlapping_symbols:
+            overlaps = [
+                f"{symbol} ({assigned_symbols[symbol]})" for symbol in overlapping_symbols
+            ]
+            raise ValueError(
+                f"{field_name}.{category} reuses symbols already assigned to another category: {overlaps}"
+            )
+        for symbol in symbols:
+            assigned_symbols[symbol] = category
+        normalized[category] = symbols
+    return normalized
 
 
 def templated_path(template: str, symbol: str) -> str:

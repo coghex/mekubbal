@@ -12,6 +12,7 @@ def render_ticker_tabs_report(
     *,
     title: str = "Mekubbal Multi-Ticker Dashboard",
     leaderboard_reports: dict[str, str | Path] | None = None,
+    ticker_categories: dict[str, list[str]] | None = None,
 ) -> Path:
     if not ticker_reports and not leaderboard_reports:
         raise ValueError("Provide at least one ticker report or leaderboard report.")
@@ -51,6 +52,34 @@ def render_ticker_tabs_report(
     if not normalized_tickers and not normalized_leaderboards:
         raise ValueError("No valid dashboard reports were provided.")
 
+    def _display_group_name(raw_group: str) -> str:
+        cleaned = str(raw_group).strip().replace("_", " ")
+        return cleaned.title() if cleaned else "Tickers"
+
+    def _grouped_tickers() -> list[tuple[str, list[str]]]:
+        if not normalized_tickers:
+            return []
+        if not ticker_categories:
+            return [("Tickers", sorted(normalized_tickers))]
+
+        grouped: list[tuple[str, list[str]]] = []
+        assigned: set[str] = set()
+        for raw_group, raw_tickers in ticker_categories.items():
+            tickers = []
+            for raw_ticker in raw_tickers:
+                ticker = str(raw_ticker).strip().upper()
+                if ticker in normalized_tickers and ticker not in tickers:
+                    tickers.append(ticker)
+            if not tickers:
+                continue
+            grouped.append((_display_group_name(str(raw_group)), tickers))
+            assigned.update(tickers)
+
+        remaining = [ticker for ticker in sorted(normalized_tickers) if ticker not in assigned]
+        if remaining:
+            grouped.append(("Uncategorized" if grouped else "Tickers", remaining))
+        return grouped or [("Tickers", sorted(normalized_tickers))]
+
     entries: list[dict[str, str]] = []
     leaderboard_entries: list[dict[str, str]] = []
     ticker_entries: list[dict[str, str]] = []
@@ -64,16 +93,18 @@ def render_ticker_tabs_report(
         }
         entries.append(item)
         leaderboard_entries.append(item)
-    for ticker in sorted(normalized_tickers):
-        item = {
-            "id": f"ticker::{ticker}",
-            "label": ticker,
-            "group": "Tickers",
-            "src": normalized_tickers[ticker],
-            "description": f"{ticker} is a focused deep-dive report for one symbol.",
-        }
-        entries.append(item)
-        ticker_entries.append(item)
+    grouped_ticker_entries = _grouped_tickers()
+    for group_name, tickers in grouped_ticker_entries:
+        for ticker in tickers:
+            item = {
+                "id": f"ticker::{ticker}",
+                "label": ticker,
+                "group": group_name,
+                "src": normalized_tickers[ticker],
+                "description": f"{ticker} is a focused deep-dive report for one symbol.",
+            }
+            entries.append(item)
+            ticker_entries.append(item)
 
     initial = entries[0]["id"]
     entries_json = json.dumps(entries, sort_keys=True)
@@ -90,7 +121,17 @@ def render_ticker_tabs_report(
         )
 
     leaderboard_buttons = _buttons_html(leaderboard_entries)
-    ticker_buttons = _buttons_html(ticker_entries)
+    ticker_sections = "".join(
+        (
+            f"<div class='ticker-category-section'>"
+            f"<div class='subgroup-title'>{html.escape(group_name)}</div>"
+            f"<div class='report-grid'>"
+            f"{_buttons_html([entry for entry in ticker_entries if entry['group'] == group_name])}"
+            f"</div>"
+            f"</div>"
+        )
+        for group_name, _ in grouped_ticker_entries
+    )
 
     document = f"""<!doctype html>
 <html lang="en">
@@ -144,7 +185,9 @@ def render_ticker_tabs_report(
     .nav-stat .k {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; }}
     .nav-stat .v {{ margin-top: 6px; font-size: 20px; font-weight: 700; color: #eff6ff; }}
     .group-title {{ font-size: 11px; font-weight: 700; color: #94a3b8; margin: 16px 0 8px 0; text-transform: uppercase; letter-spacing: 0.08em; }}
+    .subgroup-title {{ font-size: 11px; font-weight: 700; color: #cbd5e1; margin: 12px 0 8px 0; text-transform: uppercase; letter-spacing: 0.08em; }}
     .report-grid {{ display: grid; gap: 8px; }}
+    .ticker-category-section + .ticker-category-section {{ margin-top: 6px; }}
     .report-button {{
       text-align: left;
       border: 1px solid rgba(148, 163, 184, 0.14);
@@ -252,8 +295,8 @@ def render_ticker_tabs_report(
         <div id="leaderboard-grid" class="report-grid">{leaderboard_buttons if leaderboard_buttons else "<p><em>No leaderboard pages.</em></p>"}</div>
       </div>
       <div id="ticker-section" class="section-group">
-        <div class="group-title">Tickers</div>
-        <div id="ticker-grid" class="report-grid">{ticker_buttons if ticker_buttons else "<p><em>No ticker pages.</em></p>"}</div>
+        <div class="group-title">Ticker categories</div>
+        <div id="ticker-grid">{ticker_sections if ticker_sections else "<p><em>No ticker pages.</em></p>"}</div>
       </div>
     </aside>
     <main class="content">
@@ -334,6 +377,10 @@ def render_ticker_tabs_report(
         const matchesText = !query || label.includes(query) || group.includes(query);
         button.style.display = matchesText ? '' : 'none';
       }});
+      document.querySelectorAll('.ticker-category-section').forEach((section) => {{
+        const visible = Array.from(section.querySelectorAll('.report-button')).some((button) => button.style.display !== 'none');
+        section.style.display = visible ? '' : 'none';
+      }});
       ['leaderboard-section', 'ticker-section'].forEach((sectionId) => {{
         const section = document.getElementById(sectionId);
         const visible = Array.from(section.querySelectorAll('.report-button')).some((button) => button.style.display !== 'none');
@@ -352,4 +399,3 @@ def render_ticker_tabs_report(
 """
     output.write_text(document, encoding="utf-8")
     return output
-

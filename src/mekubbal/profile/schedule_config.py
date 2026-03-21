@@ -12,7 +12,7 @@ from mekubbal.profile.config import deep_merge, parse_symbols, resolve_existing_
 def default_profile_schedule_config() -> dict[str, Any]:
     return {
         "schedule": {
-            "matrix_config": "configs/profile-matrix.toml",
+            "matrix_config": "profile-matrix.toml",
             "symbols": [],
             "health_snapshot_path": "reports/active_profile_health.csv",
             "health_history_path": "reports/active_profile_health_history.csv",

@@ -129,6 +129,29 @@ def test_render_ticker_tabs_report_includes_leaderboards(tmp_path):
     assert "stability.html" in text
 
 
+def test_render_ticker_tabs_report_groups_tickers_by_category(tmp_path):
+    output = tmp_path / "dashboard.html"
+    aapl = tmp_path / "aapl.html"
+    cl = tmp_path / "cl.html"
+    aapl.write_text("<html>AAPL</html>", encoding="utf-8")
+    cl.write_text("<html>CL</html>", encoding="utf-8")
+
+    result = render_ticker_tabs_report(
+        output_path=output,
+        ticker_reports={"AAPL": aapl, "CL": cl},
+        ticker_categories={"tech": ["AAPL"], "commodities": ["CL"]},
+        title="Categorized Dashboard",
+    )
+
+    assert result.exists()
+    text = result.read_text(encoding="utf-8")
+    assert "Ticker categories" in text
+    assert "Tech" in text
+    assert "Commodities" in text
+    assert "data-group='Tech'" in text
+    assert "data-group='Commodities'" in text
+
+
 def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
     output = tmp_path / "product_dashboard.html"
     ticker_summary = tmp_path / "ticker_health_summary.csv"
@@ -143,6 +166,7 @@ def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
         [
             {
                 "symbol": "AAPL",
+                "symbol_category": "tech",
                 "status": "Healthy",
                 "recommendation": "Bullish setup",
                 "recommendation_subtitle": "positive and stable",
@@ -161,6 +185,7 @@ def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
             },
             {
                 "symbol": "MSFT",
+                "symbol_category": "commodities",
                 "status": "Watch",
                 "recommendation": "Caution",
                 "recommendation_subtitle": "promise is there, but warning flags are active",
@@ -215,6 +240,7 @@ def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
         [
             {
                 "symbol": "AAPL",
+                "symbol_category": "tech",
                 "profile": "base",
                 "symbol_rank": 2,
                 "avg_equity_gap": 0.01,
@@ -223,6 +249,7 @@ def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
             },
             {
                 "symbol": "AAPL",
+                "symbol_category": "tech",
                 "profile": "candidate",
                 "symbol_rank": 1,
                 "avg_equity_gap": 0.032,
@@ -231,6 +258,7 @@ def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
             },
             {
                 "symbol": "MSFT",
+                "symbol_category": "commodities",
                 "profile": "base",
                 "symbol_rank": 1,
                 "avg_equity_gap": 0.005,
@@ -291,6 +319,8 @@ def test_render_product_dashboard_writes_user_facing_layout(tmp_path):
     assert "Shadow check details" in text
     assert "Run change details" in text
     assert "No urgent issues" in text
+    assert "Tech" in text
+    assert "Commodities" in text
     assert "Mekubbal Market Pulse" not in text
 
 

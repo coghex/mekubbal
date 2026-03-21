@@ -59,6 +59,15 @@ def render_product_dashboard(
         except ValueError:
             return None
 
+    def _normalize_category(value: Any) -> str | None:
+        if pd.isna(value):
+            return None
+        text = str(value).strip().lower()
+        return text or None
+
+    def _display_category(value: str) -> str:
+        return value.replace("_", " ").title()
+
     summary = ticker_summary.copy()
     summary["symbol"] = summary["symbol"].astype(str).str.upper()
     health = health_history.copy()
@@ -77,6 +86,7 @@ def render_product_dashboard(
     for _, row in summary.sort_values("symbol").iterrows():
         symbol = str(row["symbol"]).upper()
         status = str(row.get("status", "Healthy"))
+        symbol_category = _normalize_category(row.get("symbol_category"))
         active_profile = str(row.get("active_profile", ""))
         selected_profile = str(row.get("selected_profile", active_profile))
         source = str(row.get("active_profile_source", "selection_state"))
@@ -160,6 +170,14 @@ def render_product_dashboard(
         perf_rows = symbol_perf[symbol_perf["symbol"] == symbol].sort_values(
             ["symbol_rank", "profile"]
         )
+        if symbol_category is None and "symbol_category" in perf_rows.columns:
+            category_values = [
+                _normalize_category(value)
+                for value in perf_rows["symbol_category"].tolist()
+                if _normalize_category(value) is not None
+            ]
+            if category_values:
+                symbol_category = category_values[0]
         profiles: list[dict[str, Any]] = []
         for _, perf in perf_rows.iterrows():
             profile_name = str(perf.get("profile", ""))
@@ -179,6 +197,7 @@ def render_product_dashboard(
 
         ticker_payload[symbol] = {
             "symbol": symbol,
+            "symbol_category": symbol_category,
             "status": status,
             "recommendation": recommendation,
             "recommendation_subtitle": recommendation_subtitle,
@@ -699,12 +718,30 @@ def render_product_dashboard(
         tickers_sorted = sorted(ticker_payload)
     if not tickers_sorted:
         raise ValueError("No ticker rows found for product dashboard.")
-    nav_buttons = "".join(
+    explicit_categories_present = any(
+        _normalize_category(payload.get("symbol_category")) is not None for payload in ticker_payload.values()
+    )
+    categorized_tickers: dict[str, list[str]] = {}
+    for ticker in tickers_sorted:
+        payload = ticker_payload.get(ticker, {})
+        category = _normalize_category(payload.get("symbol_category"))
+        if category is None:
+            category = "uncategorized" if explicit_categories_present else "tickers"
+        categorized_tickers.setdefault(category, []).append(ticker)
+    nav_sections = "".join(
         (
-            f"<button id='nav-{ticker}' class='nav-button nav-ticker-button' "
-            f'title="{ticker}" aria-label="{ticker}" onclick="showTicker(\'{ticker}\')">{ticker}</button>'
+            "<div class='nav-section'>"
+            f"<div class='nav-label'>{html.escape(_display_category(category))}</div>"
+            + "".join(
+                (
+                    f"<button id='nav-{ticker}' class='nav-button nav-ticker-button' "
+                    f'title="{ticker}" aria-label="{ticker}" onclick="showTicker(\'{ticker}\')">{ticker}</button>'
+                )
+                for ticker in tickers
+            )
+            + "</div>"
         )
-        for ticker in tickers_sorted
+        for category, tickers in categorized_tickers.items()
     )
     latest_health_run = None
     if "run_timestamp_utc" in health.columns:
@@ -1334,7 +1371,7 @@ def render_product_dashboard(
     <aside class="side">
       <button id="nav-overview" class="nav-button nav-overview-button active" title="Overview" aria-label="Overview" onclick="showOverview()">Overview</button>
       <div class="ticker-rail">
-        {nav_buttons}
+        {nav_sections}
       </div>
       <div class="rail-bottom">
         <button id="nav-system" class="nav-button nav-system-button" title="System" aria-label="System" onclick="showSystem()">System</button>

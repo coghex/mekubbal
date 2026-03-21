@@ -8,6 +8,11 @@ import yfinance as yf
 
 REQUIRED_COLUMNS = ["date", "open", "high", "low", "close", "volume"]
 OUTLIER_RETURN_THRESHOLD = 0.2
+DOWNLOAD_SYMBOL_ALIASES = {
+    "CL": "CL=F",
+    "GC": "GC=F",
+    "NG1": "NG=F",
+}
 
 
 def normalize_downloaded_candle_ranges(data: pd.DataFrame, source_name: str) -> pd.DataFrame:
@@ -53,8 +58,20 @@ def validate_ohlcv_frame(data: pd.DataFrame, source_name: str) -> pd.DataFrame:
         failing = {column: int(count) for column, count in counts.items() if int(count) > 0}
         raise ValueError(f"{source_name} contains missing/non-numeric OHLCV values: {failing}")
 
-    if (validated[["open", "high", "low", "close"]] <= 0).any().any():
-        raise ValueError(f"{source_name} has non-positive OHLC prices.")
+    zero_price_mask = (validated[["open", "high", "low", "close"]] == 0).any(axis=1)
+    if zero_price_mask.any():
+        raise ValueError(f"{source_name} has zero OHLC prices.")
+
+    negative_price_mask = (validated[["open", "high", "low", "close"]] < 0).any(axis=1)
+    if negative_price_mask.any():
+        warnings.warn(
+            (
+                f"{source_name} contains {int(negative_price_mask.sum())} rows with negative OHLC prices; "
+                "commodity futures may occasionally do this, so downstream return features can look extreme."
+            ),
+            UserWarning,
+            stacklevel=2,
+        )
     if (validated["volume"] < 0).any():
         raise ValueError(f"{source_name} has negative volume values.")
 
@@ -85,9 +102,18 @@ def validate_ohlcv_frame(data: pd.DataFrame, source_name: str) -> pd.DataFrame:
     return validated.reset_index(drop=True)
 
 
+def resolve_download_symbol(symbol: str) -> str:
+    normalized = str(symbol).strip().upper()
+    if not normalized:
+        raise ValueError("symbol must be non-empty.")
+    return DOWNLOAD_SYMBOL_ALIASES.get(normalized, normalized)
+
+
 def download_ohlcv(symbol: str, start: str, end: str) -> pd.DataFrame:
+    requested_symbol = str(symbol).strip().upper()
+    vendor_symbol = resolve_download_symbol(requested_symbol)
     raw = yf.download(
-        symbol,
+        vendor_symbol,
         start=start,
         end=end,
         interval="1d",
@@ -96,7 +122,9 @@ def download_ohlcv(symbol: str, start: str, end: str) -> pd.DataFrame:
         threads=False,
     )
     if raw.empty:
-        raise ValueError(f"No data returned for {symbol} between {start} and {end}.")
+        raise ValueError(
+            f"No data returned for {requested_symbol} between {start} and {end}."
+        )
 
     df = raw.copy()
     if isinstance(df.columns, pd.MultiIndex):
@@ -109,8 +137,8 @@ def download_ohlcv(symbol: str, start: str, end: str) -> pd.DataFrame:
 
     df = df[["open", "high", "low", "close", "volume"]].dropna().reset_index()
     df = df.rename(columns={"Date": "date", "index": "date"})
-    df = normalize_downloaded_candle_ranges(df, source_name=f"downloaded data for {symbol}")
-    return validate_ohlcv_frame(df, source_name=f"downloaded data for {symbol}")
+    df = normalize_downloaded_candle_ranges(df, source_name=f"downloaded data for {requested_symbol}")
+    return validate_ohlcv_frame(df, source_name=f"downloaded data for {requested_symbol}")
 
 
 def save_ohlcv_csv(data: pd.DataFrame, output_path: str | Path) -> Path:

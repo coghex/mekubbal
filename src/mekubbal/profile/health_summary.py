@@ -445,6 +445,9 @@ def build_ticker_summary(snapshot: pd.DataFrame, alerts: pd.DataFrame, history: 
         rows.append(
             {
                 "symbol": symbol,
+                "symbol_category": str(row.get("symbol_category")).strip().lower()
+                if pd.notna(row.get("symbol_category"))
+                else None,
                 "status": status,
                 "recommendation": recommendation_fields["recommendation"],
                 "recommendation_subtitle": recommendation_fields["recommendation_subtitle"],

@@ -26,6 +26,17 @@ symbols = ["aapl", "msft"]
     assert loaded["ensemble_v3"]["decision_csv_path"] == "reports/profile_ensemble_decisions.csv"
 
 
+def test_load_profile_schedule_config_uses_sibling_matrix_config_by_default(tmp_path):
+    matrix_config = tmp_path / "profile-matrix.toml"
+    matrix_config.write_text('symbols = ["AAPL"]\n', encoding="utf-8")
+    schedule_config = tmp_path / "profile-schedule.toml"
+    schedule_config.write_text("[schedule]\nsymbols = []\n", encoding="utf-8")
+
+    loaded = load_profile_schedule_config(schedule_config)
+
+    assert loaded["schedule"]["matrix_config"] == "profile-matrix.toml"
+
+
 def test_load_profile_schedule_config_rejects_invalid_shadow_min_match_ratio(tmp_path):
     matrix_config = tmp_path / "profile-matrix.toml"
     matrix_config.write_text("symbols = [\"AAPL\"]\n", encoding="utf-8")

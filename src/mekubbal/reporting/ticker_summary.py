@@ -39,6 +39,7 @@ def _build_ticker_rankings(ticker_payload: dict[str, dict[str, Any]]) -> list[di
         scored_rows.append(
             {
                 "symbol": symbol,
+                "symbol_category": payload.get("symbol_category"),
                 "score": score,
                 "recommendation": str(payload.get("recommendation", "")),
                 "confidence": str(payload.get("confidence", "")),
@@ -106,6 +107,7 @@ def _build_ticker_rankings(ticker_payload: dict[str, dict[str, Any]]) -> list[di
         ranking_row = {
             "rank": index + 1,
             "symbol": symbol,
+            "symbol_category": row.get("symbol_category"),
             "ranking_score": float(row["score"]),
             "reason": reason,
             "comparison": comparison,
@@ -116,4 +118,3 @@ def _build_ticker_rankings(ticker_payload: dict[str, dict[str, Any]]) -> list[di
         ticker_payload[symbol]["comparison_summary"] = comparison
         ticker_payload[symbol]["ranking_score"] = float(row["score"])
     return rankings
-

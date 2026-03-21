@@ -1,4 +1,8 @@
-symbols = ["AAPL", "MSFT", "NVDA", "RDDT", "TSM", "AVGO"]
+symbols = ["AAPL", "MSFT", "NVDA", "RDDT", "TSM", "AVGO", "CL", "GC", "NG1"]
+
+[symbol_categories]
+tech = ["AAPL", "MSFT", "NVDA", "RDDT", "TSM", "AVGO"]
+commodities = ["CL", "GC", "NG1"]
 
 [matrix]
 output_root = "../logs/profile_matrix_daily"

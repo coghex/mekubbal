@@ -104,8 +104,8 @@ symbol = "AAPL"
             "selection": {"promoted": True, "active_model_path": f"models/{config['logging']['symbol']}.zip"},
         }
 
-    def fake_render_tabs(*, output_path, ticker_reports, title):
-        _ = title
+    def fake_render_tabs(*, output_path, ticker_reports, title, ticker_categories=None):
+        _ = title, ticker_categories
         out = Path(output_path)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(str(ticker_reports), encoding="utf-8")

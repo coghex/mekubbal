@@ -337,6 +337,9 @@ def test_run_profile_backfill_skips_symbols_without_enough_total_history(monkeyp
         f"""
 symbols = ["AAPL", "RDDT"]
 
+[symbol_categories]
+tech = ["AAPL", "RDDT"]
+
 [matrix]
 output_root = "{output_root}"
 build_dashboard = false

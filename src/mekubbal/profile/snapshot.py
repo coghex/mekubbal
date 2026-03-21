@@ -69,6 +69,11 @@ def build_active_snapshot(
     for symbol, group in frame.groupby("symbol"):
         sorted_group = group.sort_values("symbol_rank").reset_index(drop=True)
         by_profile = {str(row["profile"]): row for _, row in sorted_group.iterrows()}
+        symbol_category = None
+        if "symbol_category" in sorted_group.columns:
+            category_values = [str(value).strip() for value in sorted_group["symbol_category"].tolist() if pd.notna(value)]
+            if category_values:
+                symbol_category = category_values[0] or None
         selected = str(selected_profiles.get(symbol) or "")
         if not selected or selected not in by_profile:
             selected = str(sorted_group.iloc[0]["profile"])
@@ -93,6 +98,7 @@ def build_active_snapshot(
             {
                 "run_timestamp_utc": run_timestamp_utc,
                 "symbol": symbol,
+                "symbol_category": symbol_category,
                 "selected_profile": selected,
                 "selected_rank": int(selected_row["symbol_rank"]),
                 "selected_gap": float(selected_row["avg_equity_gap"]),

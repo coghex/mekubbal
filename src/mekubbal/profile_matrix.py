@@ -11,6 +11,7 @@ import tomllib
 from mekubbal.profile.config import (
     deep_merge,
     normalize_symbol_overrides,
+    parse_symbol_categories,
     parse_symbols,
     resolve_existing_path,
     resolve_path,
@@ -69,9 +70,39 @@ def _default_profile_matrix_config() -> dict[str, Any]:
             "prefer_previous_active": True,
             "fallback_profile": "base",
         },
+        "symbol_categories": {},
         "symbol_overrides": {},
         "symbols": [],
     }
+
+
+def _symbol_category_lookup(symbol_categories: dict[str, list[str]]) -> dict[str, str]:
+    lookup: dict[str, str] = {}
+    for category, symbols in symbol_categories.items():
+        for symbol in symbols:
+            lookup[str(symbol).upper()] = str(category).strip().lower()
+    return lookup
+
+
+def _active_symbol_categories(
+    symbol_categories: dict[str, list[str]],
+    available_symbols: list[str],
+) -> dict[str, list[str]]:
+    available = [str(symbol).strip().upper() for symbol in available_symbols if str(symbol).strip()]
+    if not available:
+        return {}
+    available_set = set(available)
+    grouped: dict[str, list[str]] = {}
+    for category, symbols in symbol_categories.items():
+        category_symbols = [symbol for symbol in symbols if symbol in available_set]
+        if category_symbols:
+            grouped[str(category).strip().lower()] = category_symbols
+    assigned = {symbol for symbols in grouped.values() for symbol in symbols}
+    unassigned = [symbol for symbol in available if symbol not in assigned]
+    if unassigned:
+        fallback_category = "uncategorized" if grouped else "tickers"
+        grouped[fallback_category] = unassigned
+    return grouped
 
 
 def _base_runner_settings(config: dict[str, Any], symbol: str) -> dict[str, Any]:
@@ -89,6 +120,11 @@ def _validate_profile_matrix_config(config: dict[str, Any], *, config_dir: Path)
     promotion = config["promotion"]
     symbols = parse_symbols(config["symbols"], field_name="symbols", require_non_empty=True)
     config["symbols"] = symbols
+    config["symbol_categories"] = parse_symbol_categories(
+        config.get("symbol_categories"),
+        field_name="symbol_categories",
+        allowed_symbols=symbols,
+    )
     config["symbol_overrides"] = normalize_symbol_overrides(config.get("symbol_overrides"))
 
     if not matrix.get("output_root"):
@@ -164,6 +200,10 @@ def run_profile_matrix_config(
     _validate_profile_matrix_config(runtime_config, config_dir=config_dir_path)
     if symbols_override is not None:
         runtime_config["symbols"] = [str(value).strip().upper() for value in symbols_override]
+        runtime_config["symbol_categories"] = _active_symbol_categories(
+            dict(runtime_config.get("symbol_categories", {})),
+            runtime_config["symbols"],
+        )
         _validate_profile_matrix_config(runtime_config, config_dir=config_dir_path)
     if promotion_override is not None:
         if not isinstance(promotion_override, dict):
@@ -175,6 +215,8 @@ def run_profile_matrix_config(
     comparison_cfg = runtime_config["comparison"]
     promotion_cfg = runtime_config["promotion"]
     symbols = list(runtime_config["symbols"])
+    symbol_categories = dict(runtime_config.get("symbol_categories", {}))
+    symbol_to_category = _symbol_category_lookup(symbol_categories)
 
     output_root = resolve_path(config_dir_path, str(matrix_cfg["output_root"]))
     output_root.mkdir(parents=True, exist_ok=True)
@@ -262,6 +304,7 @@ def run_profile_matrix_config(
                     "profile": profile,
                     "profile_slug": row.get("profile_slug"),
                     "symbol_rank": int(row["symbol_rank"]),
+                    "symbol_category": symbol_to_category.get(symbol),
                     "avg_equity_gap": gap,
                     "walkforward_avg_policy_final_equity": row.get("walkforward_avg_policy_final_equity"),
                     "walkforward_avg_buy_and_hold_equity": row.get("walkforward_avg_buy_and_hold_equity"),
@@ -360,6 +403,7 @@ def run_profile_matrix_config(
                 output_path=dashboard_file,
                 ticker_reports=ticker_reports,
                 leaderboard_reports=leaderboard_reports,
+                ticker_categories=_active_symbol_categories(symbol_categories, list(ticker_reports)),
                 title=str(matrix_cfg["dashboard_title"]),
             )
         )
@@ -375,6 +419,10 @@ def run_profile_matrix_config(
         "profile_aggregate_html_path": str(aggregate_html_path),
         "profile_pairwise_csv_path": str(pairwise_csv_path),
         "profile_pairwise_html_path": str(pairwise_html_path),
+        "symbol_categories": _active_symbol_categories(
+            symbol_categories,
+            sorted(symbol_summary_frame["symbol"].dropna().astype(str).str.upper().unique().tolist()),
+        ),
         "profile_selection": profile_selection,
         "dashboard_path": dashboard_path,
         "skipped_symbols": skipped_symbols,
