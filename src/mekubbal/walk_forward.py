@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -26,6 +27,13 @@ def generate_walk_forward_splits(
     step = test_window if step_window is None else step_window
     if step < 1:
         raise ValueError("step_window must be >= 1.")
+    if not expanding and step < train_window:
+        warnings.warn(
+            f"Rolling walk-forward with step_window ({step}) < train_window ({train_window}): "
+            f"training windows will include data from previous folds' test periods. "
+            f"Set expanding=True or increase step_window to avoid this.",
+            stacklevel=2,
+        )
 
     splits: list[tuple[int, int, int, int]] = []
     offset = 0

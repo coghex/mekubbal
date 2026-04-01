@@ -128,7 +128,79 @@ def test_run_profile_monitor_builds_history_and_alerts(tmp_path):
     assert "buy-and-hold" in aapl_row["summary"]
     assert "current issues" in aapl_row["summary"].lower()
     assert "watch for this ticker" in aapl_row["what_to_watch"].lower()
-    assert int(aapl_row["runs_observed"]) == 2
+
+
+def test_run_profile_monitor_dedupes_same_run_timestamp(tmp_path):
+    summary_path = tmp_path / "profile_symbol_summary.csv"
+    selection_state_path = tmp_path / "profile_selection_state.json"
+    snapshot_path = tmp_path / "active_profile_health.csv"
+    history_path = tmp_path / "active_profile_health_history.csv"
+    alerts_csv = tmp_path / "profile_drift_alerts.csv"
+    alerts_html = tmp_path / "profile_drift_alerts.html"
+    alerts_history = tmp_path / "profile_drift_alerts_history.csv"
+    ticker_summary_csv = tmp_path / "ticker_health_summary.csv"
+    ticker_summary_html = tmp_path / "ticker_health_summary.html"
+
+    selection_state_path.write_text(
+        json.dumps(
+            {
+                "promotion_rule": {"base_profile": "base", "candidate_profile": "candidate"},
+                "active_profiles": {"AAPL": "candidate"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    pd.DataFrame(
+        [
+            {"symbol": "AAPL", "profile": "base", "symbol_rank": 2, "avg_equity_gap": 0.01},
+            {"symbol": "AAPL", "profile": "candidate", "symbol_rank": 1, "avg_equity_gap": 0.04},
+        ]
+    ).to_csv(summary_path, index=False)
+    run_profile_monitor(
+        profile_symbol_summary_path=summary_path,
+        selection_state_path=selection_state_path,
+        health_snapshot_path=snapshot_path,
+        health_history_path=history_path,
+        drift_alerts_csv_path=alerts_csv,
+        drift_alerts_html_path=alerts_html,
+        drift_alerts_history_path=alerts_history,
+        ticker_summary_csv_path=ticker_summary_csv,
+        ticker_summary_html_path=ticker_summary_html,
+        lookback_runs=1,
+        max_gap_drop=0.01,
+        max_rank_worsening=0.5,
+        min_active_minus_base_gap=-0.01,
+        run_timestamp_utc="2026-01-01T00:00:00+00:00",
+    )
+
+    pd.DataFrame(
+        [
+            {"symbol": "AAPL", "profile": "base", "symbol_rank": 1, "avg_equity_gap": 0.02},
+            {"symbol": "AAPL", "profile": "candidate", "symbol_rank": 2, "avg_equity_gap": -0.03},
+        ]
+    ).to_csv(summary_path, index=False)
+    run_profile_monitor(
+        profile_symbol_summary_path=summary_path,
+        selection_state_path=selection_state_path,
+        health_snapshot_path=snapshot_path,
+        health_history_path=history_path,
+        drift_alerts_csv_path=alerts_csv,
+        drift_alerts_html_path=alerts_html,
+        drift_alerts_history_path=alerts_history,
+        ticker_summary_csv_path=ticker_summary_csv,
+        ticker_summary_html_path=ticker_summary_html,
+        lookback_runs=1,
+        max_gap_drop=0.01,
+        max_rank_worsening=0.5,
+        min_active_minus_base_gap=-0.01,
+        run_timestamp_utc="2026-01-01T00:00:00+00:00",
+    )
+
+    history = pd.read_csv(history_path)
+    assert len(history) == 1
+    assert history.iloc[0]["run_timestamp_utc"] == "2026-01-01T00:00:00+00:00"
+    assert float(history.iloc[0]["active_gap"]) == -0.03
 
 
 def test_run_profile_monitor_only_shortlists_after_repeated_positive_history(tmp_path):

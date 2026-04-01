@@ -685,7 +685,7 @@ effective_selection_state_path = "reports/profile_selection_state_shadow_ensembl
     pd.DataFrame(
         [
             {
-                "run_timestamp_utc": "2026-01-01T00:00:00+00:00",
+                "run_timestamp_utc": "2025-12-31T00:00:00+00:00",
                 "accepted": True,
                 "recommended_window_runs": 4,
                 "recommended_min_match_ratio": 0.9,

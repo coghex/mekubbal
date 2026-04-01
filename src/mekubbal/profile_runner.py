@@ -10,7 +10,7 @@ import tomllib
 from mekubbal.control import load_control_config, run_research_control_config
 from mekubbal.profile.config import deep_merge, resolve_existing_path, resolve_path
 from mekubbal.profile_compare import compare_profile_reports
-from mekubbal.reporting import render_ticker_tabs_report
+from mekubbal.reporting import render_experiment_report, render_ticker_tabs_report
 
 
 def _default_profile_runner_config() -> dict[str, Any]:
@@ -46,6 +46,32 @@ def _slug(name: str) -> str:
     value = "".join(ch.lower() if ch.isalnum() else "_" for ch in name.strip())
     value = "_".join(part for part in value.split("_") if part)
     return value or "profile"
+
+
+def _walkforward_summary_from_report(report_path: str | Path) -> dict[str, Any]:
+    path = Path(report_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Walk-forward report does not exist: {path}")
+    report = pd.read_csv(path)
+    if report.empty:
+        raise ValueError(f"Walk-forward report has no rows: {path}")
+    required = {"fold_index", "policy_final_equity", "buy_and_hold_equity"}
+    missing = sorted(required - set(report.columns))
+    if missing:
+        raise ValueError(f"Walk-forward report missing required columns {missing}: {path}")
+    latest = report.iloc[-1]
+    summary = {
+        "report_path": str(path),
+        "folds": int(len(report)),
+        "latest_fold": int(latest["fold_index"]),
+        "avg_policy_final_equity": float(report["policy_final_equity"].astype(float).mean()),
+        "avg_buy_and_hold_equity": float(report["buy_and_hold_equity"].astype(float).mean()),
+    }
+    for column in [column for column in report.columns if column.startswith("diag_")]:
+        numeric = pd.to_numeric(report[column], errors="coerce")
+        if numeric.notna().any():
+            summary[f"avg_{column}"] = float(numeric.mean())
+    return summary
 
 
 def _validate_profile_runner_config(config: dict[str, Any], *, config_dir: Path) -> None:
@@ -106,6 +132,7 @@ def run_profile_runner_config(
     *,
     config_dir: str | Path,
     config_label: str = "profile-runner-inline",
+    precomputed_walkforward_reports: dict[str, str | Path] | None = None,
 ) -> dict[str, Any]:
     config_dir_path = Path(config_dir).resolve()
     runtime_config = deepcopy(config)
@@ -127,39 +154,66 @@ def run_profile_runner_config(
         profile_name = str(profile["name"]).strip()
         profile_slug = _slug(profile_name)
         profile_config_path = resolve_existing_path(config_dir_path, str(profile["config"]))
-        control_cfg = load_control_config(profile_config_path)
-
-        if data_cfg.get("path"):
-            control_cfg["data"]["path"] = str(
-                resolve_existing_path(config_dir_path, str(data_cfg["path"]))
+        if precomputed_walkforward_reports is not None:
+            raw_report_path = precomputed_walkforward_reports.get(profile_name)
+            if raw_report_path is None:
+                raise ValueError(
+                    f"Missing precomputed walk-forward report for profile '{profile_name}'."
+                )
+            report_candidate = Path(str(raw_report_path)).expanduser()
+            if report_candidate.is_absolute():
+                walk_report_path = report_candidate.resolve()
+            else:
+                walk_report_path = resolve_existing_path(config_dir_path, str(raw_report_path))
+            walk_report = str(walk_report_path)
+            visual_report = reports_root / f"profile_{profile_slug}.html"
+            render_experiment_report(
+                output_path=visual_report,
+                walkforward_report_path=walk_report_path,
+                title=f"Profile Report: {profile_name}",
+                lineage={
+                    "config_path": str(profile_config_path),
+                    "config_profile": profile_name,
+                },
             )
-        control_cfg["data"]["refresh"] = bool(data_cfg.get("refresh"))
-        if data_cfg.get("symbol") is not None:
-            control_cfg["data"]["symbol"] = data_cfg.get("symbol")
-            control_cfg["logging"]["symbol"] = data_cfg.get("symbol")
-        if data_cfg.get("start") is not None:
-            control_cfg["data"]["start"] = data_cfg.get("start")
-        if data_cfg.get("end") is not None:
-            control_cfg["data"]["end"] = data_cfg.get("end")
+            summary = {
+                "visual_report_path": str(visual_report),
+                "walkforward": _walkforward_summary_from_report(walk_report_path),
+            }
+        else:
+            control_cfg = load_control_config(profile_config_path)
 
-        profile_root = output_root / profile_slug
-        control_cfg["walkforward"]["models_dir"] = str(profile_root / "models" / "walkforward")
-        control_cfg["walkforward"]["report_path"] = str(reports_root / f"walkforward_{profile_slug}.csv")
-        control_cfg["ablation"]["models_dir"] = str(profile_root / "models" / "ablation")
-        control_cfg["ablation"]["report_path"] = str(reports_root / f"ablation_folds_{profile_slug}.csv")
-        control_cfg["ablation"]["summary_path"] = str(reports_root / f"ablation_summary_{profile_slug}.csv")
-        control_cfg["sweep"]["output_dir"] = str(profile_root / "sweeps")
-        control_cfg["sweep"]["report_path"] = str(reports_root / f"sweep_{profile_slug}.csv")
-        control_cfg["selection"]["report_path"] = str(control_cfg["walkforward"]["report_path"])
-        control_cfg["selection"]["state_path"] = str(profile_root / "models" / "current_model.json")
-        control_cfg["visualization"]["output_path"] = str(reports_root / f"profile_{profile_slug}.html")
-        control_cfg["visualization"]["title"] = f"Profile Report: {profile_name}"
+            if data_cfg.get("path"):
+                control_cfg["data"]["path"] = str(
+                    resolve_existing_path(config_dir_path, str(data_cfg["path"]))
+                )
+            control_cfg["data"]["refresh"] = bool(data_cfg.get("refresh"))
+            if data_cfg.get("symbol") is not None:
+                control_cfg["data"]["symbol"] = data_cfg.get("symbol")
+                control_cfg["logging"]["symbol"] = data_cfg.get("symbol")
+            if data_cfg.get("start") is not None:
+                control_cfg["data"]["start"] = data_cfg.get("start")
+            if data_cfg.get("end") is not None:
+                control_cfg["data"]["end"] = data_cfg.get("end")
 
-        summary = run_research_control_config(
-            control_cfg,
-            config_label=f"{profile_config_path}:{profile_name}",
-        )
-        walk_report = str(control_cfg["walkforward"]["report_path"])
+            profile_root = output_root / profile_slug
+            control_cfg["walkforward"]["models_dir"] = str(profile_root / "models" / "walkforward")
+            control_cfg["walkforward"]["report_path"] = str(reports_root / f"walkforward_{profile_slug}.csv")
+            control_cfg["ablation"]["models_dir"] = str(profile_root / "models" / "ablation")
+            control_cfg["ablation"]["report_path"] = str(reports_root / f"ablation_folds_{profile_slug}.csv")
+            control_cfg["ablation"]["summary_path"] = str(reports_root / f"ablation_summary_{profile_slug}.csv")
+            control_cfg["sweep"]["output_dir"] = str(profile_root / "sweeps")
+            control_cfg["sweep"]["report_path"] = str(reports_root / f"sweep_{profile_slug}.csv")
+            control_cfg["selection"]["report_path"] = str(control_cfg["walkforward"]["report_path"])
+            control_cfg["selection"]["state_path"] = str(profile_root / "models" / "current_model.json")
+            control_cfg["visualization"]["output_path"] = str(reports_root / f"profile_{profile_slug}.html")
+            control_cfg["visualization"]["title"] = f"Profile Report: {profile_name}"
+
+            summary = run_research_control_config(
+                control_cfg,
+                config_label=f"{profile_config_path}:{profile_name}",
+            )
+            walk_report = str(control_cfg["walkforward"]["report_path"])
         profile_gap_reports[profile_name] = walk_report
         if summary.get("visual_report_path"):
             profile_visual_reports[profile_name] = str(summary["visual_report_path"])

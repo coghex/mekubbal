@@ -100,7 +100,11 @@ class TradingEnv(gym.Env[np.ndarray, int]):
         return min(float(self.position_age_steps), 100.0) / 100.0
 
     def _observation(self) -> np.ndarray:
-        row = self.data.loc[self._step_index, self.feature_columns].to_numpy(dtype=np.float32)
+        row = np.clip(
+            self.data.loc[self._step_index, self.feature_columns].to_numpy(dtype=np.float32),
+            -5.0,
+            5.0,
+        )
         if self.include_position_age:
             state = np.array([self.position, self._position_age_norm()], dtype=np.float32)
         else:
@@ -138,18 +142,28 @@ class TradingEnv(gym.Env[np.ndarray, int]):
 
         row = self.data.iloc[self._step_index]
         market_return = float(row["next_return"])
+        regime = (
+            float(row[self.regime_column])
+            if self.regime_column is not None and self.regime_column in row
+            else 0.0
+        )
+        cost_scale = 1.0 + regime * 0.5
+        risk_scale = 1.0 + regime * 1.0
         gross_return_component = target_position * market_return
-        trade_penalty = self.trade_cost * abs(target_position - previous_position)
-        risk_penalty = self.risk_penalty * (target_position**2)
-        switch_penalty = self.switch_penalty if target_position != previous_position else 0.0
+        trade_penalty = (self.trade_cost * cost_scale) * abs(target_position - previous_position)
+        risk_penalty = (self.risk_penalty * risk_scale) * (target_position**2)
+        switch_penalty = (
+            self.switch_penalty * cost_scale if target_position != previous_position else 0.0
+        )
         if target_position == previous_position:
             self.position_age_steps += 1
         else:
             self.position_age_steps = 1
 
         self._recent_gross_returns.append(gross_return_component)
-        downside_series = np.minimum(np.asarray(self._recent_gross_returns, dtype=float), 0.0)
-        downside_volatility = float(np.std(downside_series)) if downside_series.size > 1 else 0.0
+        all_returns = np.asarray(self._recent_gross_returns, dtype=float)
+        negative_returns = all_returns[all_returns < 0.0]
+        downside_volatility = float(np.std(negative_returns)) if negative_returns.size > 1 else 0.0
         downside_penalty = self.downside_risk_penalty * downside_volatility
 
         reward_pre_drawdown = (
@@ -173,26 +187,17 @@ class TradingEnv(gym.Env[np.ndarray, int]):
             if self.peak_equity <= 0
             else max(0.0, (self.peak_equity - self.equity) / self.peak_equity)
         )
-        regime_turbulent = (
-            float(row[self.regime_column])
-            if self.regime_column is not None and self.regime_column in row
-            else 0.0
-        )
         self._step_index += 1
 
         terminated = self._step_index >= len(self.data) - 1
-        observation = (
-            np.zeros(self.observation_space.shape, dtype=np.float32)
-            if terminated
-            else self._observation()
-        )
+        observation = self._observation()
         info = {
             "equity": self.equity,
             "position": self.position,
             "position_age_steps": float(self.position_age_steps),
             "position_age_norm": self._position_age_norm(),
             "market_return": market_return,
-            "regime_turbulent": regime_turbulent,
+            "regime_turbulent": regime,
             "gross_return_component": gross_return_component,
             "trade_penalty": trade_penalty,
             "risk_penalty": risk_penalty,

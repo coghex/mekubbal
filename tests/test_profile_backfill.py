@@ -206,6 +206,7 @@ ensemble_low_confidence_threshold = 0.55
         matrix_config_override,
         matrix_config_dir,
         matrix_config_label,
+        matrix_call_overrides=None,
     ):
         _ = config, config_dir, config_label, matrix_config_dir, matrix_config_label
         calls.append(
@@ -396,6 +397,7 @@ ensemble_low_confidence_threshold = 0.55
         matrix_config_override,
         matrix_config_dir,
         matrix_config_label,
+        matrix_call_overrides=None,
     ):
         _ = config, config_dir, config_label, matrix_config_dir, matrix_config_label
         calls.append(
@@ -552,6 +554,7 @@ ensemble_low_confidence_threshold = 0.55
         matrix_config_override,
         matrix_config_dir,
         matrix_config_label,
+        matrix_call_overrides=None,
     ):
         _ = config, config_dir, config_label, matrix_config_dir, matrix_config_label
         calls.append(
@@ -579,3 +582,140 @@ ensemble_low_confidence_threshold = 0.55
     assert summary["skipped_symbols"] == []
     assert summary["minimum_required_rows_by_symbol"] == {"AAPL": 5, "RDDT": 3}
     assert summary["replay_runs"][-1]["symbols"] == ["AAPL", "RDDT"]
+
+
+def test_run_profile_backfill_fast_reuses_existing_walkforward_reports(monkeypatch, tmp_path):
+    import mekubbal.profile_backfill as backfill_module
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _write_ohlcv(data_dir / "aapl.csv", [f"2026-01-0{day}" for day in range(1, 7)])
+    _write_ohlcv(data_dir / "msft.csv", [f"2026-01-0{day}" for day in range(1, 7)])
+
+    _write_control_config(tmp_path / "control-base.toml", train_window=2, test_window=1)
+    _write_control_config(tmp_path / "control-candidate.toml", train_window=2, test_window=1)
+    _write_runner_config(tmp_path / "profile-runner.toml")
+
+    output_root = tmp_path / "logs" / "profile_matrix_daily"
+    matrix_config = tmp_path / "profile-matrix.toml"
+    matrix_config.write_text(
+        f"""
+symbols = ["AAPL", "MSFT"]
+
+[matrix]
+output_root = "{output_root}"
+build_dashboard = false
+
+[base_runner]
+config = "{tmp_path / 'profile-runner.toml'}"
+output_root_template = "symbols/{{symbol_lower}}"
+data_path_template = "{data_dir / '{symbol_lower}.csv'}"
+refresh = false
+start = ""
+end = ""
+build_symbol_dashboards = false
+
+[promotion]
+enabled = false
+""".strip(),
+        encoding="utf-8",
+    )
+
+    schedule_config = tmp_path / "profile-schedule.toml"
+    schedule_config.write_text(
+        f"""
+[schedule]
+matrix_config = "{matrix_config}"
+symbols = []
+health_snapshot_path = "reports/active_profile_health.csv"
+health_history_path = "reports/active_profile_health_history.csv"
+drift_alerts_csv_path = "reports/profile_drift_alerts.csv"
+drift_alerts_html_path = "reports/profile_drift_alerts.html"
+drift_alerts_history_path = "reports/profile_drift_alerts_history.csv"
+ticker_summary_csv_path = "reports/ticker_health_summary.csv"
+ticker_summary_html_path = "reports/ticker_health_summary.html"
+product_dashboard_path = "reports/product_dashboard.html"
+summary_json_path = "reports/profile_schedule_summary.json"
+
+[monitor]
+lookback_runs = 1
+max_gap_drop = 0.01
+max_rank_worsening = 0.5
+min_active_minus_base_gap = -0.01
+ensemble_low_confidence_threshold = 0.55
+""".strip(),
+        encoding="utf-8",
+    )
+
+    def _write_walkforward_report(path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(
+            {
+                "fold_index": [1, 2, 3, 4],
+                "test_start_date": ["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"],
+                "test_end_date": ["2026-01-03", "2026-01-04", "2026-01-05", "2026-01-06"],
+                "policy_final_equity": [1.01, 1.02, 1.03, 1.04],
+                "buy_and_hold_equity": [1.0, 1.0, 1.0, 1.0],
+            }
+        ).to_csv(path, index=False)
+
+    for symbol in ["aapl", "msft"]:
+        _write_walkforward_report(output_root / "symbols" / symbol / "reports" / "walkforward_base.csv")
+        _write_walkforward_report(output_root / "symbols" / symbol / "reports" / "walkforward_candidate.csv")
+
+    def fail_run_profile_runner_config(*args, **kwargs):
+        raise AssertionError("fast backfill should reuse existing walk-forward reports")
+
+    monkeypatch.setattr(backfill_module, "run_profile_runner_config", fail_run_profile_runner_config)
+
+    calls: list[dict[str, object]] = []
+
+    def fake_run_profile_schedule_config(
+        config,
+        *,
+        config_dir,
+        config_label,
+        run_timestamp_utc,
+        matrix_config_override,
+        matrix_config_dir,
+        matrix_config_label,
+        matrix_call_overrides=None,
+    ):
+        _ = config, config_dir, config_label, matrix_config_override, matrix_config_dir, matrix_config_label
+        reports = matrix_call_overrides["precomputed_walkforward_reports_by_symbol"]
+        counts = {
+            symbol: {
+                profile: len(pd.read_csv(path))
+                for profile, path in profile_reports.items()
+            }
+            for symbol, profile_reports in reports.items()
+        }
+        calls.append(
+            {
+                "run_timestamp_utc": run_timestamp_utc,
+                "counts": counts,
+            }
+        )
+        return {
+            "monitor_summary": {"run_timestamp_utc": run_timestamp_utc},
+            "summary_json_path": str(output_root / "reports" / "profile_schedule_summary.json"),
+            "product_dashboard_path": str(output_root / "reports" / "product_dashboard.html"),
+        }
+
+    monkeypatch.setattr(backfill_module, "run_profile_schedule_config", fake_run_profile_schedule_config)
+
+    summary = run_profile_backfill(schedule_config, max_runs=2, fast=True)
+
+    assert summary["fast"] is True
+    assert [call["run_timestamp_utc"] for call in calls] == [
+        "2026-01-05T00:00:00+00:00",
+        "2026-01-06T00:00:00+00:00",
+    ]
+    assert calls[0]["counts"] == {
+        "AAPL": {"base": 3, "candidate": 3},
+        "MSFT": {"base": 3, "candidate": 3},
+    }
+    assert calls[1]["counts"] == {
+        "AAPL": {"base": 4, "candidate": 4},
+        "MSFT": {"base": 4, "candidate": 4},
+    }

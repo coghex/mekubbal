@@ -16,6 +16,7 @@ def prepare_schedule_matrix_context(
     matrix_config_override: dict[str, Any] | None,
     matrix_config_dir: str | Path | None,
     matrix_config_label: str | None,
+    matrix_call_overrides: dict[str, Any] | None = None,
     load_profile_matrix_config_fn: Any,
     run_profile_matrix_fn: Any,
     run_profile_matrix_config_fn: Any,
@@ -28,6 +29,8 @@ def prepare_schedule_matrix_context(
     matrix_call_kwargs: dict[str, Any] = {
         "symbols_override": symbols if symbols else None,
     }
+    if matrix_call_overrides is not None:
+        matrix_call_kwargs.update(matrix_call_overrides)
     resolved_matrix_config_dir = (
         Path(matrix_config_dir).resolve() if matrix_config_dir is not None else matrix_config_path.parent
     )

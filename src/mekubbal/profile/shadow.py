@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,14 @@ def _append_history_rows(rows: pd.DataFrame, history_path: Path) -> pd.DataFrame
         merged = pd.concat([existing, rows], ignore_index=True)
     else:
         merged = rows.copy()
+    if {"run_timestamp_utc", "symbol"}.issubset(set(merged.columns)):
+        merged = merged.drop_duplicates(subset=["run_timestamp_utc", "symbol"], keep="last").reset_index(
+            drop=True
+        )
+    elif "run_timestamp_utc" in merged.columns:
+        merged = merged.drop_duplicates(subset=["run_timestamp_utc"], keep="last").reset_index(drop=True)
+    else:
+        merged = merged.drop_duplicates(keep="last").reset_index(drop=True)
     merged.to_csv(history_path, index=False)
     return merged
 
@@ -80,6 +89,16 @@ def _build_shadow_comparison(
     merged = production.merge(shadow, on="symbol", how="inner").sort_values("symbol").reset_index(drop=True)
     if merged.empty:
         raise ValueError("Shadow comparison found no overlapping symbols.")
+    prod_symbols = set(production["symbol"].astype(str))
+    shadow_symbols = set(shadow["symbol"].astype(str))
+    overlap_ratio = len(prod_symbols & shadow_symbols) / max(len(prod_symbols | shadow_symbols), 1)
+    if overlap_ratio < 0.8:
+        warnings.warn(
+            f"Shadow comparison covers only {overlap_ratio:.0%} of symbols "
+            f"(production={len(prod_symbols)}, shadow={len(shadow_symbols)}, "
+            f"overlap={len(prod_symbols & shadow_symbols)}).",
+            stacklevel=2,
+        )
 
     merged.insert(0, "run_timestamp_utc", run_timestamp_utc)
     merged["active_profile_match"] = (

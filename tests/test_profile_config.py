@@ -80,3 +80,15 @@ def test_templated_path_renders_symbol_variants():
     rendered = templated_path("symbols/{symbol_lower}/{symbol_upper}/{symbol}", "AAPL")
 
     assert rendered == "symbols/aapl/AAPL/AAPL"
+
+
+def test_templated_path_preserves_prefixed_crypto_symbols():
+    rendered = templated_path("data/{symbol_lower}.csv", "$BTC")
+
+    assert rendered == "data/$btc.csv"
+
+
+def test_templated_path_preserves_non_uniform_foreign_tickers():
+    rendered = templated_path("data/{symbol_lower}.csv", "005930.KS")
+
+    assert rendered == "data/005930.ks.csv"

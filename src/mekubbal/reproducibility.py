@@ -46,13 +46,22 @@ def object_sha256(value: Any) -> str:
 
 
 def dependency_versions() -> dict[str, str]:
-    package_names = ["numpy", "pandas", "torch", "stable-baselines3", "gymnasium"]
+    package_names = ["numpy", "pandas", "torch", "stable-baselines3", "gymnasium", "yfinance"]
     versions: dict[str, str] = {}
     for name in package_names:
         try:
             versions[name] = metadata.version(name)
         except metadata.PackageNotFoundError:
             versions[name] = "not-installed"
+    if torch.cuda.is_available():
+        versions["cuda"] = torch.version.cuda or "unknown"
+        versions["cudnn"] = (
+            str(torch.backends.cudnn.version())
+            if torch.backends.cudnn.is_available()
+            else "not-available"
+        )
+    else:
+        versions["cuda"] = "not-available"
     return versions
 
 

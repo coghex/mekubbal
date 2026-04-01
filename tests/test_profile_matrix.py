@@ -130,7 +130,7 @@ pairwise_title = "Pairwise"
         encoding="utf-8",
     )
 
-    def fake_run_profile_runner_config(config, *, config_dir, config_label):
+    def fake_run_profile_runner_config(config, *, config_dir, config_label, precomputed_walkforward_reports=None):
         _ = config_dir, config_label
         symbol = str(config["data"]["symbol"]).upper()
         out_root = Path(config["runner"]["output_root"])
@@ -254,7 +254,7 @@ enabled = false
         encoding="utf-8",
     )
 
-    def fake_run_profile_runner_config(config, *, config_dir, config_label):
+    def fake_run_profile_runner_config(config, *, config_dir, config_label, precomputed_walkforward_reports=None):
         _ = config_dir, config_label
         out_root = Path(config["runner"]["output_root"])
         out_root.mkdir(parents=True, exist_ok=True)
@@ -293,6 +293,108 @@ enabled = false
 
     assert summary["symbols_run"] == 1
     assert summary["symbol_categories"] == {"tech": ["AAPL"]}
+
+
+def test_run_profile_matrix_passes_precomputed_reports_to_runner(monkeypatch, tmp_path):
+    import mekubbal.profile_matrix as matrix_module
+
+    control = tmp_path / "control.toml"
+    profile_runner = tmp_path / "profile-runner.toml"
+    matrix_config = tmp_path / "profile-matrix.toml"
+    control.write_text("[data]\npath='unused.csv'\n", encoding="utf-8")
+    profile_runner.write_text(
+        f"""
+[[profiles]]
+name = "base"
+config = "{control}"
+
+[[profiles]]
+name = "candidate"
+config = "{control}"
+""".strip(),
+        encoding="utf-8",
+    )
+    matrix_config.write_text(
+        f"""
+symbols = ["AAPL"]
+
+[matrix]
+output_root = "{tmp_path / "out"}"
+build_dashboard = false
+
+[base_runner]
+config = "{profile_runner}"
+build_symbol_dashboards = false
+
+[promotion]
+enabled = false
+""".strip(),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_run_profile_runner_config(
+        config,
+        *,
+        config_dir,
+        config_label,
+        precomputed_walkforward_reports=None,
+    ):
+        _ = config, config_dir, config_label
+        captured["reports"] = precomputed_walkforward_reports
+        out_root = tmp_path / "out" / "symbols" / "aapl"
+        out_root.mkdir(parents=True, exist_ok=True)
+        pairwise_csv = out_root / "pairwise.csv"
+        pairwise_html = out_root / "pairwise.html"
+        pd.DataFrame({"profile_a": ["base"], "profile_b": ["candidate"], "p_value_two_sided": [0.5]}).to_csv(
+            pairwise_csv,
+            index=False,
+        )
+        pairwise_html.write_text("<html>pairwise</html>", encoding="utf-8")
+        return {
+            "pairwise_summary": {
+                "output_csv_path": str(pairwise_csv),
+                "output_html_path": str(pairwise_html),
+            },
+            "dashboard_path": None,
+            "profiles": [
+                {
+                    "profile": "base",
+                    "profile_slug": "base",
+                    "walkforward_report_path": "base.csv",
+                    "visual_report_path": "base.html",
+                    "walkforward_avg_policy_final_equity": 1.0,
+                    "walkforward_avg_buy_and_hold_equity": 0.99,
+                },
+                {
+                    "profile": "candidate",
+                    "profile_slug": "candidate",
+                    "walkforward_report_path": "candidate.csv",
+                    "visual_report_path": "candidate.html",
+                    "walkforward_avg_policy_final_equity": 1.01,
+                    "walkforward_avg_buy_and_hold_equity": 0.99,
+                },
+            ],
+        }
+
+    monkeypatch.setattr(matrix_module, "run_profile_runner_config", fake_run_profile_runner_config)
+
+    summary = matrix_module.run_profile_matrix(
+        matrix_config,
+        precomputed_walkforward_reports_by_symbol={
+            "AAPL": {
+                "base": tmp_path / "walk_base.csv",
+                "candidate": tmp_path / "walk_candidate.csv",
+            }
+        },
+    )
+
+    assert summary["symbols_run"] == 1
+    assert captured["reports"] == {
+        "base": tmp_path / "walk_base.csv",
+        "candidate": tmp_path / "walk_candidate.csv",
+    }
 
 
 def test_run_profile_matrix_invokes_profile_selection_when_enabled(monkeypatch, tmp_path):
@@ -354,7 +456,7 @@ fallback_profile = "base"
         encoding="utf-8",
     )
 
-    def fake_run_profile_runner_config(config, *, config_dir, config_label):
+    def fake_run_profile_runner_config(config, *, config_dir, config_label, precomputed_walkforward_reports=None):
         _ = config, config_dir, config_label
         out_root = tmp_path / "out" / "symbols" / "aapl"
         out_root.mkdir(parents=True, exist_ok=True)
@@ -470,7 +572,7 @@ fallback_profile = "base"
         encoding="utf-8",
     )
 
-    def fake_run_profile_runner_config(config, *, config_dir, config_label):
+    def fake_run_profile_runner_config(config, *, config_dir, config_label, precomputed_walkforward_reports=None):
         _ = config, config_dir, config_label
         out_root = tmp_path / "out" / "symbols" / "aapl"
         out_root.mkdir(parents=True, exist_ok=True)
@@ -575,7 +677,7 @@ pairwise_title = "Pairwise"
         encoding="utf-8",
     )
 
-    def fake_run_profile_runner_config(config, *, config_dir, config_label):
+    def fake_run_profile_runner_config(config, *, config_dir, config_label, precomputed_walkforward_reports=None):
         _ = config_dir, config_label
         symbol = str(config["data"]["symbol"]).upper()
         if symbol == "RDDT":
@@ -703,7 +805,7 @@ pairwise_title = "Pairwise"
 
     profile_config_paths: dict[str, str] = {}
 
-    def fake_run_profile_runner_config(config, *, config_dir, config_label):
+    def fake_run_profile_runner_config(config, *, config_dir, config_label, precomputed_walkforward_reports=None):
         _ = config_dir, config_label
         symbol = str(config["data"]["symbol"]).upper()
         profile_config_paths[symbol] = str(config["profiles"][0]["config"])

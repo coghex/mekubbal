@@ -1,8 +1,13 @@
-symbols = ["AAPL", "MSFT", "NVDA", "RDDT", "TSM", "AVGO", "CL", "GC", "NG1"]
+symbols = ["AAPL", "MSFT", "NVDA", "RDDT", "TSM", "AVGO", "AMZN", "GOOGL", "AMD", "ASML", "MU", "CSCO", "LRCX", "AMAT", "IBM", "INTC", "ARM", "QCOM", "CL", "GC", "NG1", "HG", "ZS", "ZC", "ZW", "GLD", "B", "SLV", "USO", "URA", "DBA", "$BTC", "$ETH", "$XRP", "IBIT", "ETHA", "XOM", "JNJ", "CVX", "PG", "GE", "BRK-B", "JPM", "V", "WMT", "COST", "005930.KS", "TCEHY", "1398.HK", "000660.KS", "TM", "HSBC"]
 
 [symbol_categories]
-tech = ["AAPL", "MSFT", "NVDA", "RDDT", "TSM", "AVGO"]
-commodities = ["CL", "GC", "NG1"]
+tech = ["AAPL", "MSFT", "NVDA", "RDDT", "TSM", "AVGO", "AMZN", "GOOGL", "AMD", "ASML", "MU", "CSCO", "LRCX", "AMAT", "IBM", "INTC", "ARM", "QCOM"]
+commodities = ["CL", "GC", "NG1", "HG", "ZS", "ZC", "ZW", "GLD", "B", "SLV", "USO", "URA", "DBA"]
+crypto = ["$BTC", "$ETH", "$XRP", "IBIT", "ETHA"]
+industrials = ["XOM", "JNJ", "CVX", "PG", "GE"]
+financials = ["BRK-B", "JPM", "V"]
+retail = ["WMT", "COST"]
+foreign = ["005930.KS", "TCEHY", "1398.HK", "000660.KS", "TM", "HSBC"]
 
 [matrix]
 output_root = "../logs/profile_matrix_daily"
@@ -26,6 +31,15 @@ end = ""
 build_symbol_dashboards = true
 
 [symbol_overrides.RDDT]
+config = "profile-runner-daily-short-history.toml"
+
+[symbol_overrides.ARM]
+config = "profile-runner-daily-short-history.toml"
+
+[symbol_overrides.IBIT]
+config = "profile-runner-daily-short-history.toml"
+
+[symbol_overrides.ETHA]
 config = "profile-runner-daily-short-history.toml"
 
 [comparison]

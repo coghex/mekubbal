@@ -42,6 +42,11 @@ def main() -> None:
         action="store_true",
         help="Delete the configured output root before replaying history",
     )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Reuse full walk-forward reports and replay by filtering reports instead of retraining each date",
+    )
     args = parser.parse_args()
     summary = run_profile_backfill(
         args.config,
@@ -50,6 +55,7 @@ def main() -> None:
         every=args.every,
         max_runs=args.max_runs,
         reset_output=args.reset_output,
+        fast=args.fast,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
 

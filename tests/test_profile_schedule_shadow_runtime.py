@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import pandas as pd
 
 from mekubbal.profile.schedule_shadow_runtime import (
     resolve_shadow_runtime_settings,
     run_schedule_shadow,
 )
+from mekubbal.profile.shadow import _append_history_rows
 
 
 def test_resolve_shadow_runtime_settings_uses_saved_effective_thresholds(tmp_path):
@@ -130,3 +132,18 @@ def test_run_schedule_shadow_applies_promotion_when_gate_passes(monkeypatch, tmp
     assert summary["promotion_applied"] is True
     assert loaded["shadow_marker"] == "candidate-ready"
     assert loaded["shadow_gate"]["window_runs"] == 2
+
+
+def test_append_history_rows_dedupes_same_run_timestamp(tmp_path):
+    history_path = tmp_path / "history.csv"
+    _append_history_rows(
+        rows=pd.DataFrame([{"run_timestamp_utc": "2026-01-01T00:00:00+00:00", "accepted": False}]),
+        history_path=history_path,
+    )
+    merged = _append_history_rows(
+        rows=pd.DataFrame([{"run_timestamp_utc": "2026-01-01T00:00:00+00:00", "accepted": True}]),
+        history_path=history_path,
+    )
+
+    assert len(merged) == 1
+    assert bool(merged.iloc[0]["accepted"]) is True

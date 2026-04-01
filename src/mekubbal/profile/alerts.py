@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
+
+
+def _history_dedupe_subset(frame: pd.DataFrame) -> list[str] | None:
+    columns = set(frame.columns)
+    if {"run_timestamp_utc", "symbol"}.issubset(columns):
+        return ["run_timestamp_utc", "symbol"]
+    if "run_timestamp_utc" in columns:
+        return ["run_timestamp_utc"]
+    return None
 
 
 def append_history(snapshot: pd.DataFrame, history_path: str | Path) -> pd.DataFrame:
@@ -11,9 +22,23 @@ def append_history(snapshot: pd.DataFrame, history_path: str | Path) -> pd.DataF
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         existing = pd.read_csv(path)
+        extra_cols = set(snapshot.columns) - set(existing.columns)
+        missing_cols = set(existing.columns) - set(snapshot.columns)
+        if extra_cols or missing_cols:
+            warnings.warn(
+                f"History schema mismatch at {path}: "
+                f"new columns {extra_cols or 'none'}, "
+                f"missing columns {missing_cols or 'none'}",
+                stacklevel=2,
+            )
         merged = pd.concat([existing, snapshot], ignore_index=True)
     else:
         merged = snapshot.copy()
+    dedupe_subset = _history_dedupe_subset(merged)
+    if dedupe_subset is not None:
+        merged = merged.drop_duplicates(subset=dedupe_subset, keep="last").reset_index(drop=True)
+    else:
+        merged = merged.drop_duplicates(keep="last").reset_index(drop=True)
     merged.to_csv(path, index=False)
     return merged
 
@@ -70,6 +95,12 @@ def _alert_rows(
             gap_drop = baseline_gap - latest_gap
             rank_worsening = latest_rank - baseline_rank
             reasons: list[str] = []
+            if len(baseline) >= 3:
+                gap_values = baseline["active_gap"].astype(float).to_numpy()
+                x = np.arange(len(gap_values), dtype=float)
+                slope = float(np.polyfit(x, gap_values, 1)[0])
+                if slope < -max_gap_drop / max(lookback_runs, 1):
+                    reasons.append("gap_trend_declining")
             if gap_drop > max_gap_drop:
                 reasons.append("gap_drop_exceeded")
             if rank_worsening > max_rank_worsening:

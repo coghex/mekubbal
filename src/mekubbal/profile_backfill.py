@@ -21,7 +21,7 @@ from mekubbal.profile_matrix import (
     _base_runner_settings,
     load_profile_matrix_config,
 )
-from mekubbal.profile_runner import load_profile_runner_config
+from mekubbal.profile_runner import _slug, load_profile_runner_config, run_profile_runner_config
 from mekubbal.profile_schedule import load_profile_schedule_config, run_profile_schedule_config
 
 
@@ -195,6 +195,75 @@ def _timestamp_for_replay_date(replay_date: pd.Timestamp) -> str:
     return replay_date.tz_localize("UTC").isoformat()
 
 
+def _filter_walkforward_report_frame(frame: pd.DataFrame, *, replay_date: pd.Timestamp) -> pd.DataFrame:
+    if "test_end_date" not in frame.columns:
+        raise ValueError("Fast backfill requires walk-forward reports with a test_end_date column.")
+    test_ok = pd.to_datetime(frame["test_end_date"], errors="coerce").dt.normalize() <= replay_date
+    if "train_end_date" in frame.columns:
+        train_ok = (
+            pd.to_datetime(frame["train_end_date"], errors="coerce").dt.normalize() <= replay_date
+        )
+        filtered = frame[test_ok & train_ok].copy()
+    else:
+        filtered = frame[test_ok].copy()
+    if filtered.empty:
+        raise ValueError(
+            f"No walk-forward folds remain on or before replay date {replay_date.date().isoformat()}."
+        )
+    return filtered
+
+
+def _resolve_or_build_walkforward_reports(
+    matrix_config: dict[str, Any],
+    *,
+    matrix_config_dir: Path,
+    output_root: Path,
+    symbols: list[str],
+) -> dict[str, dict[str, Path]]:
+    runner_config_cache: dict[Path, dict[str, Any]] = {}
+    reports_by_symbol: dict[str, dict[str, Path]] = {}
+    for symbol in symbols:
+        effective_base_runner = _base_runner_settings(matrix_config, symbol)
+        runner_config_path = _resolve_existing_path(matrix_config_dir, str(effective_base_runner["config"]))
+        base_runner_config = runner_config_cache.get(runner_config_path)
+        if base_runner_config is None:
+            base_runner_config = load_profile_runner_config(runner_config_path)
+            runner_config_cache[runner_config_path] = base_runner_config
+        base_runner_dir = runner_config_path.parent
+        symbol_output_root = output_root / _templated_path(
+            str(effective_base_runner["output_root_template"]), symbol
+        )
+        expected_reports = {
+            str(profile["name"]).strip(): symbol_output_root / "reports" / f"walkforward_{_slug(str(profile['name']).strip())}.csv"
+            for profile in base_runner_config["profiles"]
+        }
+        if not all(path.exists() for path in expected_reports.values()):
+            symbol_runner = deepcopy(base_runner_config)
+            symbol_runner["runner"]["output_root"] = str(symbol_output_root)
+            symbol_runner["runner"]["build_dashboard"] = False
+            symbol_runner["runner"]["dashboard_title"] = f"{symbol} Profile Workspace"
+            symbol_runner["data"]["path"] = _templated_path(
+                str(effective_base_runner["data_path_template"]), symbol
+            )
+            symbol_runner["data"]["refresh"] = bool(effective_base_runner["refresh"])
+            symbol_runner["data"]["symbol"] = symbol
+            symbol_runner["data"]["start"] = effective_base_runner.get("start")
+            symbol_runner["data"]["end"] = effective_base_runner.get("end")
+            symbol_runner["comparison"]["title"] = f"{symbol} Profile Pairwise Significance"
+            runner_summary = run_profile_runner_config(
+                symbol_runner,
+                config_dir=base_runner_dir,
+                config_label=f"{runner_config_path}:{symbol}:fast-cache",
+            )
+            expected_reports = {
+                str(row["profile"]).strip(): Path(str(row["walkforward_report_path"])).resolve()
+                for row in runner_summary.get("profiles", [])
+                if row.get("walkforward_report_path")
+            }
+        reports_by_symbol[symbol] = expected_reports
+    return reports_by_symbol
+
+
 def run_profile_backfill(
     config_path: str | Path,
     *,
@@ -203,6 +272,7 @@ def run_profile_backfill(
     every: int = 1,
     max_runs: int | None = None,
     reset_output: bool = False,
+    fast: bool = False,
 ) -> dict[str, Any]:
     schedule_config_path = Path(config_path).resolve()
     schedule_config = load_profile_schedule_config(schedule_config_path)
@@ -247,13 +317,29 @@ def run_profile_backfill(
     replay_runs: list[dict[str, Any]] = []
     with TemporaryDirectory(prefix="mekubbal-backfill-") as temp_dir_raw:
         temp_dir = Path(temp_dir_raw)
-        temp_data_dir = temp_dir / "data"
-        temp_data_dir.mkdir(parents=True, exist_ok=True)
-
         matrix_override = deepcopy(matrix_config)
-        matrix_override["base_runner"]["data_path_template"] = str(temp_data_dir / "{symbol_lower}.csv")
-        for override in matrix_override.get("symbol_overrides", {}).values():
-            override["data_path_template"] = str(temp_data_dir / "{symbol_lower}.csv")
+        full_walkforward_reports: dict[str, dict[str, Path]] | None = None
+        full_walkforward_frames: dict[str, dict[str, pd.DataFrame]] | None = None
+        temp_data_dir = temp_dir / "data"
+        if fast:
+            full_walkforward_reports = _resolve_or_build_walkforward_reports(
+                matrix_config,
+                matrix_config_dir=matrix_config_dir,
+                output_root=output_root,
+                symbols=list(eligible_frames.keys()),
+            )
+            full_walkforward_frames = {
+                symbol: {
+                    profile: pd.read_csv(report_path)
+                    for profile, report_path in profile_reports.items()
+                }
+                for symbol, profile_reports in full_walkforward_reports.items()
+            }
+        else:
+            temp_data_dir.mkdir(parents=True, exist_ok=True)
+            matrix_override["base_runner"]["data_path_template"] = str(temp_data_dir / "{symbol_lower}.csv")
+            for override in matrix_override.get("symbol_overrides", {}).values():
+                override["data_path_template"] = str(temp_data_dir / "{symbol_lower}.csv")
 
         for replay_date in replay_dates:
             active_symbols = _active_symbols_for_replay_date(
@@ -268,9 +354,34 @@ def run_profile_backfill(
                 dict(matrix_config.get("symbol_categories", {})),
                 active_symbols,
             )
-            for symbol, frame in eligible_frames.items():
-                snapshot = frame[pd.to_datetime(frame["date"]).dt.normalize() <= replay_date].copy()
-                snapshot.to_csv(temp_data_dir / f"{symbol.lower()}.csv", index=False)
+            matrix_call_overrides = None
+            if fast:
+                assert full_walkforward_frames is not None
+                filtered_root = temp_dir / "filtered_reports" / replay_date.date().isoformat()
+                precomputed_reports_by_symbol: dict[str, dict[str, str]] = {}
+                for symbol in active_symbols:
+                    profile_reports: dict[str, str] = {}
+                    for profile, full_report_frame in full_walkforward_frames[symbol].items():
+                        filtered = _filter_walkforward_report_frame(
+                            full_report_frame,
+                            replay_date=replay_date,
+                        )
+                        filtered_path = (
+                            filtered_root
+                            / symbol.lower()
+                            / f"walkforward_{_slug(profile)}.csv"
+                        )
+                        filtered_path.parent.mkdir(parents=True, exist_ok=True)
+                        filtered.to_csv(filtered_path, index=False)
+                        profile_reports[profile] = str(filtered_path)
+                    precomputed_reports_by_symbol[symbol] = profile_reports
+                matrix_call_overrides = {
+                    "precomputed_walkforward_reports_by_symbol": precomputed_reports_by_symbol,
+                }
+            else:
+                for symbol, frame in eligible_frames.items():
+                    snapshot = frame[pd.to_datetime(frame["date"]).dt.normalize() <= replay_date].copy()
+                    snapshot.to_csv(temp_data_dir / f"{symbol.lower()}.csv", index=False)
 
             run_summary = run_profile_schedule_config(
                 schedule_config,
@@ -280,6 +391,7 @@ def run_profile_backfill(
                 matrix_config_override=matrix_override,
                 matrix_config_dir=matrix_config_dir,
                 matrix_config_label=f"{matrix_config_path}@{replay_date.date().isoformat()}",
+                matrix_call_overrides=matrix_call_overrides,
             )
             replay_runs.append(
                 {
@@ -306,6 +418,7 @@ def run_profile_backfill(
         "every": int(every),
         "max_runs": int(max_runs) if max_runs is not None else None,
         "reset_output": bool(reset_output),
+        "fast": bool(fast),
         "runs_replayed": int(len(replay_runs)),
         "first_replay_date": replay_runs[0]["replay_date"],
         "last_replay_date": replay_runs[-1]["replay_date"],

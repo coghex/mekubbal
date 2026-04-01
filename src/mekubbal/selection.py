@@ -28,7 +28,7 @@ def load_walkforward_report(report_path: str | Path) -> pd.DataFrame:
 def evaluate_promotion_rule(
     report: pd.DataFrame,
     lookback_folds: int = 3,
-    min_gap: float = 0.0,
+    min_gap: float = 0.005,
     require_all_recent: bool = True,
     min_turbulent_step_count: float = 0.0,
     min_turbulent_reward_mean: float | None = None,
@@ -90,18 +90,30 @@ def evaluate_promotion_rule(
                 f"Regime gate enabled but walk-forward report missing columns: {missing_columns}"
             )
 
-        recent_turbulent_step_count = float(recent["diag_turbulent_step_count"].astype(float).sum())
+        weights = recent["diag_turbulent_step_count"].astype(float)
+        recent_turbulent_step_count = float(weights.sum())
+        total_weight = weights.sum()
         if "diag_turbulent_reward_mean" in recent.columns:
-            recent_turbulent_reward_mean = float(recent["diag_turbulent_reward_mean"].astype(float).mean())
+            if total_weight > 0:
+                recent_turbulent_reward_mean = float(
+                    (recent["diag_turbulent_reward_mean"].astype(float) * weights).sum()
+                    / total_weight
+                )
         if "diag_turbulent_win_rate" in recent.columns:
-            recent_turbulent_win_rate = float(recent["diag_turbulent_win_rate"].astype(float).mean())
+            if total_weight > 0:
+                recent_turbulent_win_rate = float(
+                    (recent["diag_turbulent_win_rate"].astype(float) * weights).sum()
+                    / total_weight
+                )
         if "diag_turbulent_equity_factor" in recent.columns:
-            recent_turbulent_equity_factor = float(
-                recent["diag_turbulent_equity_factor"].astype(float).mean()
-            )
+            if total_weight > 0:
+                recent_turbulent_equity_factor = float(
+                    (recent["diag_turbulent_equity_factor"].astype(float) * weights).sum()
+                    / total_weight
+                )
         if "diag_turbulent_max_drawdown" in recent.columns:
             recent_turbulent_max_drawdown = float(
-                recent["diag_turbulent_max_drawdown"].astype(float).mean()
+                recent["diag_turbulent_max_drawdown"].astype(float).max()
             )
 
         if recent_turbulent_step_count < min_turbulent_step_count:
@@ -176,7 +188,7 @@ def run_model_selection(
     report_path: str | Path,
     state_path: str | Path,
     lookback_folds: int = 3,
-    min_gap: float = 0.0,
+    min_gap: float = 0.005,
     require_all_recent: bool = True,
     min_turbulent_step_count: float = 0.0,
     min_turbulent_reward_mean: float | None = None,

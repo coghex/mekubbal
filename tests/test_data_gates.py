@@ -111,9 +111,16 @@ def test_download_ohlcv_normalizes_inconsistent_vendor_candles(monkeypatch):
 @pytest.mark.parametrize(
     ("requested_symbol", "expected_symbol"),
     [
+        ("$BTC", "BTC-USD"),
+        ("$ETH", "ETH-USD"),
+        ("$XRP", "XRP-USD"),
         ("CL", "CL=F"),
         ("GC", "GC=F"),
+        ("HG", "HG=F"),
         ("NG1", "NG=F"),
+        ("ZS", "ZS=F"),
+        ("ZC", "ZC=F"),
+        ("ZW", "ZW=F"),
         ("AAPL", "AAPL"),
     ],
 )

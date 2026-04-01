@@ -67,9 +67,10 @@ def run_policy_episode(
     }
 
 
-def buy_and_hold_equity(test_data: pd.DataFrame) -> float:
+def buy_and_hold_equity(test_data: pd.DataFrame, trade_cost: float = 0.0) -> float:
     returns = test_data["next_return"].to_numpy(dtype=float)
-    return float(np.prod(1.0 + returns))
+    raw = float(np.prod(1.0 + returns))
+    return raw * (1.0 - 2.0 * trade_cost)
 
 
 def evaluate_model(
@@ -97,5 +98,5 @@ def evaluate_model(
         include_position_age=include_position_age,
         position_levels=position_levels,
     )
-    baseline = buy_and_hold_equity(test_data)
+    baseline = buy_and_hold_equity(test_data, trade_cost=trade_cost)
     return {**policy_metrics, "buy_and_hold_equity": baseline}

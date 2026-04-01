@@ -28,23 +28,24 @@ def train_on_split(
     include_position_age: bool = True,
     position_levels: Iterable[float] = DEFAULT_POSITION_LEVELS,
     seed: int = 7,
+    n_envs: int = 4,
 ) -> dict[str, float]:
     set_global_seed(seed)
-    vec_env = DummyVecEnv(
-        [
-            lambda: TradingEnv(
-                train_data,
-                trade_cost=trade_cost,
-                risk_penalty=risk_penalty,
-                switch_penalty=switch_penalty,
-                downside_risk_penalty=downside_risk_penalty,
-                drawdown_penalty=drawdown_penalty,
-                downside_window=downside_window,
-                include_position_age=include_position_age,
-                position_levels=position_levels,
-            )
-        ]
-    )
+
+    def _make_env() -> TradingEnv:
+        return TradingEnv(
+            train_data,
+            trade_cost=trade_cost,
+            risk_penalty=risk_penalty,
+            switch_penalty=switch_penalty,
+            downside_risk_penalty=downside_risk_penalty,
+            drawdown_penalty=drawdown_penalty,
+            downside_window=downside_window,
+            include_position_age=include_position_age,
+            position_levels=position_levels,
+        )
+
+    vec_env = DummyVecEnv([_make_env for _ in range(max(1, n_envs))])
     model = PPO("MlpPolicy", vec_env, seed=seed, verbose=0)
     model.learn(total_timesteps=total_timesteps, progress_bar=False)
 

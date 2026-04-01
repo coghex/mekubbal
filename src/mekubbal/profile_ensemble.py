@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -239,9 +240,21 @@ def compute_regime_gated_ensemble(
         available_profiles = [str(value) for value in ranked["profile"].tolist()]
         selected_profile = str(active_profiles.get(symbol) or "")
         if selected_profile not in available_profiles:
+            warnings.warn(
+                f"Ensemble: active profile '{selected_profile}' for {symbol} not found "
+                f"in available profiles {available_profiles}; "
+                f"using '{available_profiles[0]}'.",
+                stacklevel=2,
+            )
             selected_profile = available_profiles[0]
         fallback = str(fallback_profile)
         if fallback not in available_profiles:
+            warnings.warn(
+                f"Ensemble: fallback profile '{fallback_profile}' for {symbol} not found "
+                f"in available profiles {available_profiles}; "
+                f"using '{available_profiles[0]}'.",
+                stacklevel=2,
+            )
             fallback = available_profiles[0]
 
         pairwise_csv = None

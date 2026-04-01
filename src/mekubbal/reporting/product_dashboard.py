@@ -783,7 +783,7 @@ def render_product_dashboard(
     * {{ box-sizing: border-box; }}
     body {{ margin: 0; font-family: Arial, sans-serif; color: var(--text); background: var(--bg); }}
     a {{ color: var(--blue); }}
-    .layout {{ display: grid; grid-template-columns: 96px minmax(0, 1fr); min-height: 100vh; }}
+    .layout {{ display: grid; grid-template-columns: 112px minmax(0, 1fr); min-height: 100vh; }}
     .side {{
       background: #09090b;
       color: #f4f4f5;
@@ -1358,7 +1358,7 @@ def render_product_dashboard(
     }}
     .footnote {{ margin-top: 20px; font-size: 12px; color: #64748b; line-height: 1.6; }}
     @media (max-width: 700px) {{
-      .layout {{ grid-template-columns: 88px minmax(0, 1fr); }}
+      .layout {{ grid-template-columns: 96px minmax(0, 1fr); }}
       .hero, .ticker-toolbar, .section-head {{ flex-direction: column; }}
       .summary-grid, .detail-metrics, .system-grid, .detail-grid, .delta-grid, .workspace-head, .workspace-grid, .workspace-grid-compact, .workspace-grid-triple, .overview-strip {{ grid-template-columns: 1fr; }}
       .overview-strip-item {{ border-right: none; border-bottom: 1px solid #e5e7eb; }}

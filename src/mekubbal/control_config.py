@@ -4,7 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from mekubbal.config import deep_merge, load_toml_table
+from mekubbal.config import deep_merge, load_toml_table, validate_config_types
 
 
 def default_control_config() -> dict[str, Any]:
@@ -63,7 +63,7 @@ def default_control_config() -> dict[str, Any]:
             "report_path": "logs/walkforward.csv",
             "state_path": "models/current_model.json",
             "lookback": 3,
-            "min_gap": 0.0,
+            "min_gap": 0.005,
             "allow_average_rule": False,
             "min_turbulent_steps": 100.0,
             "min_turbulent_reward_mean": None,
@@ -84,7 +84,22 @@ def default_control_config() -> dict[str, Any]:
     }
 
 
+_POLICY_TYPE_SCHEMA: dict[str, type] = {
+    "timesteps": int,
+    "trade_cost": float,
+    "risk_penalty": float,
+    "switch_penalty": float,
+    "position_levels": list,
+    "seed": int,
+    "downside_window": int,
+}
+
+
 def validate_control_config(config: dict[str, Any]) -> None:
+    policy_type_errors = validate_config_types(config.get("policy", {}), _POLICY_TYPE_SCHEMA)
+    if policy_type_errors:
+        raise ValueError(f"policy section type errors: {'; '.join(policy_type_errors)}")
+
     data = config["data"]
     policy = config["policy"]
     walkforward = config["walkforward"]

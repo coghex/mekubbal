@@ -31,6 +31,7 @@ def run_profile_schedule_config(
     matrix_config_override: dict[str, Any] | None = None,
     matrix_config_dir: str | Path | None = None,
     matrix_config_label: str | None = None,
+    matrix_call_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     config_dir_path = Path(config_dir).resolve()
     runtime_config = deepcopy(config)
@@ -49,6 +50,7 @@ def run_profile_schedule_config(
         matrix_config_override=matrix_config_override,
         matrix_config_dir=matrix_config_dir,
         matrix_config_label=matrix_config_label,
+        matrix_call_overrides=matrix_call_overrides,
         load_profile_matrix_config_fn=load_profile_matrix_config,
         run_profile_matrix_fn=run_profile_matrix,
         run_profile_matrix_config_fn=run_profile_matrix_config,

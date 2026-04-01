@@ -194,6 +194,7 @@ def run_profile_matrix_config(
     config_label: str = "<inline>",
     symbols_override: list[str] | None = None,
     promotion_override: dict[str, Any] | None = None,
+    precomputed_walkforward_reports_by_symbol: dict[str, dict[str, str | Path]] | None = None,
 ) -> dict[str, Any]:
     config_dir_path = Path(config_dir).resolve()
     runtime_config = deepcopy(config)
@@ -217,6 +218,16 @@ def run_profile_matrix_config(
     symbols = list(runtime_config["symbols"])
     symbol_categories = dict(runtime_config.get("symbol_categories", {}))
     symbol_to_category = _symbol_category_lookup(symbol_categories)
+    normalized_precomputed_reports = (
+        {
+            str(symbol).strip().upper(): {
+                str(profile).strip(): path for profile, path in profile_reports.items()
+            }
+            for symbol, profile_reports in precomputed_walkforward_reports_by_symbol.items()
+        }
+        if precomputed_walkforward_reports_by_symbol is not None
+        else None
+    )
 
     output_root = resolve_path(config_dir_path, str(matrix_cfg["output_root"]))
     output_root.mkdir(parents=True, exist_ok=True)
@@ -260,6 +271,11 @@ def run_profile_matrix_config(
                 symbol_runner,
                 config_dir=base_runner_dir,
                 config_label=f"{base_runner_config_path}:{symbol}",
+                precomputed_walkforward_reports=(
+                    normalized_precomputed_reports.get(symbol)
+                    if normalized_precomputed_reports is not None
+                    else None
+                ),
             )
         except ValueError as exc:
             if not _is_insufficient_history_error(exc):
@@ -434,6 +450,7 @@ def run_profile_matrix(
     *,
     symbols_override: list[str] | None = None,
     promotion_override: dict[str, Any] | None = None,
+    precomputed_walkforward_reports_by_symbol: dict[str, dict[str, str | Path]] | None = None,
 ) -> dict[str, Any]:
     config_file = Path(config_path).resolve()
     config = load_profile_matrix_config(config_file)
@@ -443,4 +460,5 @@ def run_profile_matrix(
         config_label=str(config_file),
         symbols_override=symbols_override,
         promotion_override=promotion_override,
+        precomputed_walkforward_reports_by_symbol=precomputed_walkforward_reports_by_symbol,
     )

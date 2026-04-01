@@ -9,9 +9,16 @@ import yfinance as yf
 REQUIRED_COLUMNS = ["date", "open", "high", "low", "close", "volume"]
 OUTLIER_RETURN_THRESHOLD = 0.2
 DOWNLOAD_SYMBOL_ALIASES = {
+    "$BTC": "BTC-USD",
+    "$ETH": "ETH-USD",
+    "$XRP": "XRP-USD",
     "CL": "CL=F",
     "GC": "GC=F",
+    "HG": "HG=F",
     "NG1": "NG=F",
+    "ZS": "ZS=F",
+    "ZC": "ZC=F",
+    "ZW": "ZW=F",
 }
 
 

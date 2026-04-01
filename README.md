@@ -141,6 +141,7 @@ mekubbal-profile-schedule --config configs/profile-schedule-daily.toml
 The daily ticker universe is driven by `configs/profile-matrix-daily.toml`, so adding symbols there updates both the daily run and the manual backfill workflow.
 That config can also define `[symbol_categories]` so the dashboard navigation groups symbols (for example `tech` vs `commodities`) instead of showing one flat ticker list.
 Commodity shorthand symbols are also resolved automatically during downloads: `CL -> CL=F`, `GC -> GC=F`, and `NG1 -> NG=F`.
+Crypto spot symbols can also stay user-facing in config by prefixing the coin with `$`, for example `$BTC -> BTC-USD`, `$ETH -> ETH-USD`, and `$XRP -> XRP-USD`.
 If a newer ticker does not yet have enough rows for the standard daily windows, add a symbol-specific override there (for example `symbol_overrides.RDDT`) that points to a shorter-history runner config instead of weakening the older-ticker defaults.
 
 Rebuild the daily schedule history from raw ticker CSVs (useful after adding tickers or resetting report state):
@@ -150,6 +151,7 @@ mekubbal-profile-backfill --config configs/profile-schedule-daily.toml --reset-o
 ```
 
 You can also limit the replay window with `--start-date`, `--end-date`, `--every`, or `--max-runs`.
+For wider history rebuilds, `--fast` reuses existing full walk-forward reports when available (or builds them once) and then replays by filtering report rows per date instead of retraining on every replay step.
 
 If you do not want to run the replay locally, use the manual GitHub Actions workflow `Backfill Profile History`, which downloads the configured symbols and republishes Pages after the backfill completes.
 

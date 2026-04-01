@@ -25,13 +25,7 @@ def _paired_difference(
         if len(common) >= 1:
             diff = reference.loc[common].astype(float).to_numpy() - other.loc[common].astype(float).to_numpy()
             return diff[np.isfinite(diff)]
-    min_len = min(len(reference), len(other))
-    if min_len < 1:
-        return np.asarray([], dtype=float)
-    ref_values = reference.astype(float).to_numpy()[:min_len]
-    other_values = other.astype(float).to_numpy()[:min_len]
-    diff = ref_values - other_values
-    return diff[np.isfinite(diff)]
+    return np.asarray([], dtype=float)
 
 
 def generate_confidence_leaderboards(
